@@ -369,7 +369,7 @@ local function EncounterDetails()
     self.version = "1.0"
     self.name = "EncounterDetails"
     self.author = "jwunderl"
-    self.description = "This extension tracks details on every encounter you've faced."
+    self.description = "Track extra details on every encounter you've faced."
     self.github = "jwunderl/EncounterDetails-IronmonExtension"
     self.url = string.format("https://github.com/%s", self.github or "")
 
