@@ -9,9 +9,20 @@ local function EncounterDetails()
     self.url = string.format("https://github.com/%s", self.github or "")
 
     --
+    ------------------------------------------ Data Tracking -----------------------------------------
+    self.encounterData = nil
+
+    local function getPokemonEncounterData(pokemonID)
+        return self.encounterData[pokemonID]
+    end
+
+    local function trackPokemonEncounter(pokemon)
+    end
+
+    --
     ------------------------------------ Encounter Details Screen ------------------------------------
     -- matches 418047b2
-    PreviousEncountersScreen = {
+    local PreviousEncountersScreen = {
         Colors = {
             text = "Default text",
             highlight = "Intermediate text",
@@ -248,7 +259,7 @@ local function EncounterDetails()
 
         local tabContents = {}
 
-        local encounters = Tracker.getEncounterData(SCREEN.currentPokemonID)
+        local encounters = self.getPokemonEncounterData(SCREEN.currentPokemonID)
         if tab == SCREEN.Tabs.Wild then
             for _, wildEncounter in ipairs(encounters.wild) do
                 table.insert(tabContents, wildEncounter)
@@ -367,16 +378,97 @@ local function EncounterDetails()
             Drawing.drawButton(button, canvas.shadow)
         end
     end
-    
+
     --
     ------------------------------------ END Encounter Details Screen ------------------------------------
     --
+    --
+    ------------------------------------------- Tracker Buttons ------------------------------------------
+    --
+
+    --0 = transparent
+    --1 = black
+    --2 = pale pink
+    local heartPixelImage = {
+        -- 15x16
+        {0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0},
+        {1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1},
+        {1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1},
+        {0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 0},
+        {0, 1, 2, 1, 1, 2, 2, 2, 2, 2, 1, 1, 2, 1, 0},
+        {1, 2, 2, 1, 1, 2, 2, 2, 2, 2, 1, 1, 2, 2, 1},
+        {1, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 2, 2, 2, 1},
+        {1, 2, 2, 2, 1, 2, 2, 2, 2, 2, 1, 2, 2, 2, 1},
+        {1, 2, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 2, 1},
+        {1, 2, 2, 2, 1, 2, 2, 2, 2, 2, 1, 2, 2, 2, 1},
+        {0, 1, 2, 2, 2, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0},
+        {0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0},
+        {0, 0, 1, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 0, 0},
+        {0, 0, 1, 2, 2, 1, 1, 1, 1, 1, 2, 2, 1, 0, 0},
+        {0, 0, 1, 2, 2, 1, 0, 0, 0, 1, 2, 2, 1, 0, 0},
+        {0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0}
+    }
+
+    local trackerBtnBox = {
+        Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 84, -- x
+        58, -- y
+        15, -- w
+        16 -- h
+    }
+
+    local trackerBtn = {
+        type = Constants.ButtonTypes.PIXELIMAGE,
+        textColor = "Default text",
+        box = trackerBtnBox,
+        isVisible = function()
+            local viewedPokemon = Battle.getViewedPokemon(true) or {}
+            local opponentInBattle =
+                Battle.inActiveBattle() and not Battle.isViewingOwn and Pokemon.isValid(viewedPokemon.pokemonID)
+            return opponentInBattle
+            -- local allowedLegacy = (Program.Screens ~= nil and Program.currentScreen == Program.Screens.TRACKER)
+            -- local allowedCurrent = (Program.currentScreen == TrackerScreen)
+            -- return Tracker.Data.isViewingOwn and (allowedLegacy or allowedCurrent) and PokemonData.isValid(viewedPokemon.pokemonID)
+        end,
+        draw = function()
+            local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
+
+            local colors = {
+                0xFF000000, -- black
+                0xFFEAC3CE -- pale pink
+            }
+
+            Drawing.drawImageAsPixels(heartPixelImage, trackerBtnBox[1], trackerBtnBox[2], colors, shadowcolor)
+        end,
+        onClick = function()
+            local pokemon = Tracker.getViewedPokemon() or {}
+            if not PokemonData.isValid(pokemon.pokemonID) then
+                return
+            end
+
+            local defaultTab =
+                Utils.inlineIf(
+                Battle.isWildEncounter,
+                PreviousEncountersScreen.Tabs.Wild,
+                PreviousEncountersScreen.Tabs.Trainer
+            )
+            PreviousEncountersScreen.changeTab(defaultTab)
+            PreviousEncountersScreen.changePokemonID(pokemon.pokemonID)
+            Program.changeScreenView(PreviousEncountersScreen)
+        end
+    }
 
     --------------------------------------
-    -- INTENRAL TRACKER FUNCTIONS BELOW
+    -- INTERNAL TRACKER FUNCTIONS BELOW
     -- Add any number of these below functions to your extension that you want to use.
     -- If you don't need a function, don't add it at all; leave ommitted for faster code execution.
     --------------------------------------
+
+    -- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
+    -- Remove this function if you choose not to include a way for the user to configure options for your extension
+    -- NOTE: You'll need to implement a way to save & load changes for your extension options, similar to Tracker's Settings.ini file
+    function self.configureOptions()
+        -- [ADD CODE HERE]
+    end
 
     -- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
     -- Remove this function if you choose not to include a way for the user to configure options for your extension
@@ -401,14 +493,38 @@ local function EncounterDetails()
         return isUpdateAvailable, downloadUrl
     end
 
+    -- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
+    -- Remove this function if you choose not to include a way for the user to configure options for your extension
+    -- NOTE: You'll need to implement a way to save & load changes for your extension options, similar to Tracker's Settings.ini file
+    function self.configureOptions()
+        -- [ADD CODE HERE]
+    end
+
     -- Executed only once: When the extension is enabled by the user, and/or when the Tracker first starts up, after it loads all other required files and code
     function self.startup()
+        if not Main.isOnBizhawk() then
+            return
+        end
+        TrackerScreen.Buttons.EncounterDetails = trackerBtn
         -- [ADD CODE HERE]
     end
 
     -- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
     function self.unload()
-        -- [ADD CODE HERE]
+        if not Main.isOnBizhawk() then
+            return
+        end
+        TrackerScreen.Buttons.EncounterDetails = nil
+    end
+
+    -- Executed once every 30 frames or after any redraw event is scheduled (i.e. most button presses)
+    function self.afterRedraw()
+        if not Main.IsOnBizhawk() then return end
+        if TrackerScreen.Buttons.EncounterDetails ~= nil and TrackerScreen.Buttons.EncounterDetails:isVisible() then
+            local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
+            Drawing.drawButton(TrackerScreen.Buttons.EncounterDetails, shadowcolor)
+        end
+        refreshColorBox()
     end
 
     -- Executed once every 30 frames, after most data from game memory is read in
@@ -421,10 +537,6 @@ local function EncounterDetails()
         -- [ADD CODE HERE]
     end
 
-    -- Executed once every 30 frames or after any redraw event is scheduled (i.e. most button presses)
-    function self.afterRedraw()
-        -- [ADD CODE HERE]
-    end
 
     -- Executed before a button's onClick() is processed, and only once per click per button
     -- Param: button: the button object being clicked
