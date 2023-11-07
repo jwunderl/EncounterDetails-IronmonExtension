@@ -1,4 +1,4 @@
-local function EncounterDetails()
+local function EncounterDetailsExtension()
     -- Define descriptive attributes of the custom extension that are displayed on the Tracker settings
     local self = {}
     self.version = "1.0"
@@ -8,20 +8,11 @@ local function EncounterDetails()
     self.github = "jwunderl/EncounterDetails-IronmonExtension"
     self.url = string.format("https://github.com/%s", self.github or "")
 
-    --
-    ------------------------------------------ Data Tracking -----------------------------------------
     self.encounterData = nil
-
-    local function getPokemonEncounterData(pokemonID)
-        return self.encounterData[pokemonID]
-    end
-
-    local function trackPokemonEncounter(pokemon)
-    end
 
     --
     ------------------------------------ Encounter Details Screen ------------------------------------
-    -- matches 418047b2
+    --
     local PreviousEncountersScreen = {
         Colors = {
             text = "Default text",
@@ -54,6 +45,14 @@ local function EncounterDetails()
     local SCREEN = PreviousEncountersScreen
     local TAB_HEIGHT = 12
     local OFFSET_FOR_NAME = 8
+
+    local function getPokemonEncounterData(pokemonID)
+        return Tracker.getEncounterData(SCREEN.currentPokemonID)
+        -- return self.encounterData[pokemonID]
+    end
+
+    local function trackPokemonEncounter(pokemon)
+    end
 
     -- TODO: probably should close this screen automatically when opposing pokemon changes
     --		or encounter ends. Maybe this goes into InfoScreen to handle that?
@@ -259,7 +258,7 @@ local function EncounterDetails()
 
         local tabContents = {}
 
-        local encounters = self.getPokemonEncounterData(SCREEN.currentPokemonID)
+        local encounters = getPokemonEncounterData(SCREEN.currentPokemonID)
         if tab == SCREEN.Tabs.Wild then
             for _, wildEncounter in ipairs(encounters.wild) do
                 table.insert(tabContents, wildEncounter)
@@ -423,7 +422,8 @@ local function EncounterDetails()
         isVisible = function()
             local viewedPokemon = Battle.getViewedPokemon(true) or {}
             local opponentInBattle =
-                Battle.inActiveBattle() and not Battle.isViewingOwn and Pokemon.isValid(viewedPokemon.pokemonID)
+                Program.currentScreen == TrackerScreen and Battle.inActiveBattle() and not Battle.isViewingOwn and
+                PokemonData.isValid(viewedPokemon.pokemonID)
             return opponentInBattle
             -- local allowedLegacy = (Program.Screens ~= nil and Program.currentScreen == Program.Screens.TRACKER)
             -- local allowedCurrent = (Program.currentScreen == TrackerScreen)
@@ -470,13 +470,6 @@ local function EncounterDetails()
         -- [ADD CODE HERE]
     end
 
-    -- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
-    -- Remove this function if you choose not to include a way for the user to configure options for your extension
-    -- NOTE: You'll need to implement a way to save & load changes for your extension options, similar to Tracker's Settings.ini file
-    function self.configureOptions()
-        -- [ADD CODE HERE]
-    end
-
     -- Executed when the user clicks the "Check for Updates" button while viewing the extension details within the Tracker's UI
     -- Returns [true, downloadUrl] if an update is available (downloadUrl auto opens in browser for user); otherwise returns [false, downloadUrl]
     -- Remove this function if you choose not to implement a version update check for your extension
@@ -505,6 +498,7 @@ local function EncounterDetails()
         if not Main.IsOnBizhawk() then
             return
         end
+        PreviousEncountersScreen.initialize()
         TrackerScreen.Buttons.EncounterDetails = trackerBtn
         -- [ADD CODE HERE]
     end
@@ -519,12 +513,13 @@ local function EncounterDetails()
 
     -- Executed once every 30 frames or after any redraw event is scheduled (i.e. most button presses)
     function self.afterRedraw()
-        if not Main.IsOnBizhawk() then return end
+        if not Main.IsOnBizhawk() then
+            return
+        end
         if TrackerScreen.Buttons.EncounterDetails ~= nil and TrackerScreen.Buttons.EncounterDetails:isVisible() then
             local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
             Drawing.drawButton(TrackerScreen.Buttons.EncounterDetails, shadowcolor)
         end
-        refreshColorBox()
     end
 
     -- Executed once every 30 frames, after most data from game memory is read in
@@ -536,7 +531,6 @@ local function EncounterDetails()
     function self.afterBattleDataUpdate()
         -- [ADD CODE HERE]
     end
-
 
     -- Executed before a button's onClick() is processed, and only once per click per button
     -- Param: button: the button object being clicked
@@ -579,4 +573,4 @@ local function EncounterDetails()
 
     return self
 end
-return EncounterDetails
+return EncounterDetailsExtension
