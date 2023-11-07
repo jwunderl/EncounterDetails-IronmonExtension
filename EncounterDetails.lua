@@ -502,7 +502,7 @@ local function EncounterDetails()
 
     -- Executed only once: When the extension is enabled by the user, and/or when the Tracker first starts up, after it loads all other required files and code
     function self.startup()
-        if not Main.isOnBizhawk() then
+        if not Main.IsOnBizhawk() then
             return
         end
         TrackerScreen.Buttons.EncounterDetails = trackerBtn
@@ -511,7 +511,7 @@ local function EncounterDetails()
 
     -- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
     function self.unload()
-        if not Main.isOnBizhawk() then
+        if not Main.IsOnBizhawk() then
             return
         end
         TrackerScreen.Buttons.EncounterDetails = nil
