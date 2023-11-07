@@ -385,30 +385,34 @@ local function EncounterDetailsExtension()
     ------------------------------------------- Tracker Buttons ------------------------------------------
     --
 
-    --0 = transparent
-    --1 = black
-    --2 = pale pink
+    local pigColors = {
+        0xFF000000, -- black
+        0xFFEAC3CE, -- pale pink
+        0xFFFF0000, -- red
+        0xFFEB7069, -- dark pink
+        0xFFFFFFFF -- white
+    }
     local heartPixelImage = {
         -- 15x12
         {0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0},
         {1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1},
-        {1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1},
+        {1, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 1},
         {0, 1, 2, 1, 1, 2, 2, 2, 2, 2, 1, 1, 2, 1, 0},
-        {1, 2, 2, 1, 1, 2, 2, 2, 2, 2, 1, 1, 2, 2, 1},
+        {1, 2, 2, 1, 5, 2, 2, 2, 2, 2, 5, 1, 2, 2, 1},
         {1, 2, 2, 2, 2, 1, 1, 1, 1, 1, 2, 2, 2, 2, 1},
-        {1, 2, 2, 2, 1, 2, 2, 2, 2, 2, 1, 2, 2, 2, 1},
-        {1, 2, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 2, 1},
+        {1, 2, 3, 2, 1, 2, 2, 2, 2, 2, 1, 2, 3, 2, 1},
+        {1, 2, 3, 2, 1, 2, 1, 2, 1, 2, 1, 2, 3, 2, 1},
         {1, 2, 2, 2, 1, 2, 2, 2, 2, 2, 1, 2, 2, 2, 1},
         {0, 1, 2, 2, 2, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0},
         {0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0},
         {0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}
     }
-    
+
     local trackerBtnBox = {
         Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 72, -- x
         Constants.SCREEN.MARGIN + 10, -- y
         15, -- w
-        12  -- h
+        12 -- h
     }
 
     local trackerBtn = {
@@ -417,23 +421,14 @@ local function EncounterDetailsExtension()
         box = trackerBtnBox,
         isVisible = function()
             local viewedPokemon = Battle.getViewedPokemon(true) or {}
-            local opponentInBattle =
+            local viewingOpponentInBattle =
                 Program.currentScreen == TrackerScreen and Battle.inActiveBattle() and not Battle.isViewingOwn and
                 PokemonData.isValid(viewedPokemon.pokemonID)
-            return opponentInBattle
-            -- local allowedLegacy = (Program.Screens ~= nil and Program.currentScreen == Program.Screens.TRACKER)
-            -- local allowedCurrent = (Program.currentScreen == TrackerScreen)
-            -- return Tracker.Data.isViewingOwn and (allowedLegacy or allowedCurrent) and PokemonData.isValid(viewedPokemon.pokemonID)
+            return viewingOpponentInBattle
         end,
         draw = function()
             local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
-
-            local colors = {
-                0xFF000000, -- black
-                0xFFEAC3CE -- pale pink
-            }
-
-            Drawing.drawImageAsPixels(heartPixelImage, trackerBtnBox[1], trackerBtnBox[2], colors, shadowcolor)
+            Drawing.drawImageAsPixels(heartPixelImage, trackerBtnBox[1], trackerBtnBox[2], pigColors, shadowcolor)
         end,
         onClick = function()
             local pokemon = Tracker.getViewedPokemon() or {}
