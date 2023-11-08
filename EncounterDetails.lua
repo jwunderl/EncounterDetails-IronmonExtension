@@ -18,7 +18,7 @@ local function EncounterDetailsExtension()
     -- }
 
     self.encounterData = nil
-    self.serializationKey = "extensions" .. FileManager.slash  .. "EncounterDetails" .. FileManager.Extensions.TRACKED_DATA
+    self.serializationKey = "extensions" .. FileManager.slash  .. self.name .. FileManager.Extensions.TRACKED_DATA
 
     local function serializeData()
         local filepath = FileManager.prependDir(self.serializationKey)
