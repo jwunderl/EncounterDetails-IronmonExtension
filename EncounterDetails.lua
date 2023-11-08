@@ -16,20 +16,30 @@ local function EncounterDetailsExtension()
     --      t: number, -- timestamp
     --      l: number, -- level of encounter
     -- }
-
     self.encounterData = nil
-    self.serializationKey = "extensions" .. FileManager.slash .. self.name .. FileManager.Extensions.TRACKED_DATA
+    self.serializationKey =
+        FileManager.Folders.Custom .. FileManager.slash .. self.name .. FileManager.Extensions.TRACKED_DATA
 
     local function serializeData()
         local filepath = FileManager.prependDir(self.serializationKey)
-        FileManager.writeTableToFile(self.encounterData, filepath)
+        local persistedData = {
+            h = GameSettings.getRomHash(),
+            e = self.encounterData
+        }
+        FileManager.writeTableToFile(persistedData, filepath)
     end
 
     local function deserializeData()
         local filepath = FileManager.prependDir(self.serializationKey)
         local fileData = FileManager.readTableFromFile(filepath)
-        -- todo error handling I suppose, though just ignoring... might be all it can do anyways
-        self.encounterData = fileData or {}
+        local currGameHash = GameSettings.getRomHash()
+
+        if fileData == nil or fileData.e == nil or fileData.h ~= currGameHash then
+            self.encounterData = {}
+            return
+        end
+
+        self.encounterData = fileData.e
     end
 
     local function getEncounterData(pokemonID)
