@@ -22,7 +22,6 @@ local function EncounterDetailsExtension()
 
     local function serializeData()
         local filepath = self.serializationKey
-        print(filepath)
         local persistedData = {
             h = GameSettings.getRomHash(),
             e = self.encounterData
@@ -46,7 +45,7 @@ local function EncounterDetailsExtension()
     local function getEncounterData(pokemonID)
         local pokemonBucket = self.encounterData[pokemonID]
 
-        if pokemonBucket == nil then
+        if not pokemonBucket then
             pokemonBucket = {}
             self.encounterData[pokemonID] = pokemonBucket
         end
@@ -108,14 +107,6 @@ local function EncounterDetailsExtension()
     local SCREEN = PreviousEncountersScreen
     local TAB_HEIGHT = 12
     local OFFSET_FOR_NAME = 8
-
-    local function getPokemonEncounterData(pokemonID)
-        return Tracker.getEncounterData(SCREEN.currentPokemonID)
-        -- return self.encounterData[pokemonID]
-    end
-
-    local function trackPokemonEncounter(pokemon)
-    end
 
     -- TODO: probably should close this screen automatically when opposing pokemon changes
     --		or encounter ends. Maybe this goes into InfoScreen to handle that?
@@ -310,14 +301,16 @@ local function EncounterDetailsExtension()
         SCREEN.Pager.Buttons = {}
 
         local tabContents = {}
+        local encounters = getEncounterData(SCREEN.currentPokemonID)
+        local wildEncounters = encounters.w or {}
+        local trainerEncounters = encounters.t or {}
 
-        local encounters = getPokemonEncounterData(SCREEN.currentPokemonID)
         if tab == SCREEN.Tabs.Wild then
-            for _, wildEncounter in ipairs(encounters.wild) do
+            for _, wildEncounter in ipairs(wildEncounters) do
                 table.insert(tabContents, wildEncounter)
             end
         elseif tab == SCREEN.Tabs.Trainer then
-            for _, trainerEncounter in ipairs(encounters.trainer) do
+            for _, trainerEncounter in ipairs(trainerEncounters) do
                 table.insert(tabContents, trainerEncounter)
             end
         elseif tab == SCREEN.Tabs.All then
@@ -333,14 +326,13 @@ local function EncounterDetailsExtension()
         local trackerCenterX = Constants.SCREEN.WIDTH + (Constants.SCREEN.RIGHT_GAP / 2)
         local encounterButtonWidth = 100
         for _, encounter in ipairs(tabContents) do
-            -- todo remove or "" when ready, don't need to nullsafe any values that will always be there
-            local levelText = "Lv." .. (encounter.level or "")
-            local encounterTime = os.date("%b %d,  %I:%M %p", encounter.timestamp)
+            local levelText = "Lv." .. encounter.l
+            local encounterTime = os.date("%b %d,  %I:%M %p", encounter.t)
             local button = {
                 type = Constants.ButtonTypes.NO_BORDER,
                 tab = tab,
-                id = encounter.timestamp,
-                sortValue = encounter.timestamp,
+                id = encounter.t,
+                sortValue = encounter.t,
                 dimensions = {
                     width = encounterButtonWidth,
                     height = 11
@@ -495,8 +487,8 @@ local function EncounterDetailsExtension()
                 PreviousEncountersScreen.Tabs.Wild,
                 PreviousEncountersScreen.Tabs.Trainer
             )
-            PreviousEncountersScreen.changeTab(defaultTab)
             PreviousEncountersScreen.changePokemonID(pokemon.pokemonID)
+            PreviousEncountersScreen.changeTab(defaultTab)
             Program.changeScreenView(PreviousEncountersScreen)
         end
     }
@@ -506,13 +498,6 @@ local function EncounterDetailsExtension()
     -- Add any number of these below functions to your extension that you want to use.
     -- If you don't need a function, don't add it at all; leave ommitted for faster code execution.
     --------------------------------------
-
-    -- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
-    -- Remove this function if you choose not to include a way for the user to configure options for your extension
-    -- NOTE: You'll need to implement a way to save & load changes for your extension options, similar to Tracker's Settings.ini file
-    function self.configureOptions()
-        -- [ADD CODE HERE]
-    end
 
     -- Executed when the user clicks the "Check for Updates" button while viewing the extension details within the Tracker's UI
     -- Returns [true, downloadUrl] if an update is available (downloadUrl auto opens in browser for user); otherwise returns [false, downloadUrl]
@@ -528,13 +513,6 @@ local function EncounterDetailsExtension()
         local isUpdateAvailable =
             Utils.checkForVersionUpdate(versionCheckUrl, self.version, versionResponsePattern, compareFunc)
         return isUpdateAvailable, downloadUrl
-    end
-
-    -- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
-    -- Remove this function if you choose not to include a way for the user to configure options for your extension
-    -- NOTE: You'll need to implement a way to save & load changes for your extension options, similar to Tracker's Settings.ini file
-    function self.configureOptions()
-        -- [ADD CODE HERE]
     end
 
     -- Executed only once: When the extension is enabled by the user, and/or when the Tracker first starts up, after it loads all other required files and code
@@ -567,56 +545,80 @@ local function EncounterDetailsExtension()
         end
     end
 
-    -- Executed once every 30 frames, after most data from game memory is read in
-    function self.afterProgramDataUpdate()
-        -- [ADD CODE HERE]
-    end
+    local enemyPokemonMarkedEncountered = nil
 
     -- Executed once every 30 frames, after any battle related data from game memory is read in
     function self.afterBattleDataUpdate()
-        -- [ADD CODE HERE]
-    end
+        if Battle.isGhost then
+            return
+        end
+        local enemyTeam = Battle.BattleParties[1]
 
-    -- Executed before a button's onClick() is processed, and only once per click per button
-    -- Param: button: the button object being clicked
-    function self.onButtonClicked(button)
+        for slot, mon in ipairs(enemyTeam) do
+            if mon.seenAlready and not enemyPokemonMarkedEncountered[slot] then
+                enemyPokemonMarkedEncountered[slot] = true
+                local toTrack = Tracker.getPokemon(slot, false)
+                trackEncounter(toTrack, Battle.isWildEncounter)
+            end
+        end
         -- [ADD CODE HERE]
     end
 
     -- Executed after a new battle begins (wild or trainer), and only once per battle
     function self.afterBattleBegins()
-        -- [ADD CODE HERE]
+        enemyPokemonMarkedEncountered = {}
     end
 
     -- Executed after a battle ends, and only once per battle
     function self.afterBattleEnds()
-        -- [ADD CODE HERE]
+        enemyPokemonMarkedEncountered = nil
+
+        if Program.currentScreen == PreviousEncountersScreen then
+            Program.changeScreenView(TrackerScreen)
+        end
 
         serializeData()
     end
 
+    -- -- Executed once every 30 frames, after most data from game memory is read in
+    -- function self.afterProgramDataUpdate()
+    --     -- [ADD CODE HERE]
+    -- end
+    -- -- Executed before a button's onClick() is processed, and only once per click per button
+    -- -- Param: button: the button object being clicked
+    -- function self.onButtonClicked(button)
+    --     -- [ADD CODE HERE]
+    -- end
+
     -- [Bizhawk only] Executed each frame (60 frames per second)
     -- CAUTION: Avoid unnecessary calculations here, as this can easily affect performance.
-    function self.inputCheckBizhawk()
-        -- Uncomment to use, otherwise leave commented out
-        -- local mouseInput = input.getmouse() -- lowercase 'input' pulls directly from Bizhawk API
-        -- local joypadButtons = Input.getJoypadInputFormatted() -- uppercase 'Input' uses Tracker formatted input
-        -- [ADD CODE HERE]
-    end
+    -- function self.inputCheckBizhawk()
+    --     -- Uncomment to use, otherwise leave commented out
+    --     -- local mouseInput = input.getmouse() -- lowercase 'input' pulls directly from Bizhawk API
+    --     -- local joypadButtons = Input.getJoypadInputFormatted() -- uppercase 'Input' uses Tracker formatted input
+    --     -- [ADD CODE HERE]
+    -- end
 
     -- [MGBA only] Executed each frame (60 frames per second)
     -- CAUTION: Avoid unnecessary calculations here, as this can easily affect performance.
-    function self.inputCheckMGBA()
-        -- Uncomment to use, otherwise leave commented out
-        -- local joypadButtons = Input.getJoypadInputFormatted()
-        -- [ADD CODE HERE]
-    end
+    -- function self.inputCheckMGBA()
+    --     -- Uncomment to use, otherwise leave commented out
+    --     -- local joypadButtons = Input.getJoypadInputFormatted()
+    --     -- [ADD CODE HERE]
+    -- end
 
     -- Executed each frame of the game loop, after most data from game memory is read in but before any natural redraw events occur
     -- CAUTION: Avoid code here if possible, as this can easily affect performance. Most Tracker updates occur at 30-frame intervals, some at 10-frame.
-    function self.afterEachFrame()
-        -- [ADD CODE HERE]
-    end
+    -- function self.afterEachFrame()
+    --     -- [ADD CODE HERE]
+    -- end
+
+    -- -- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
+    -- -- Remove this function if you choose not to include a way for the user to configure options for your extension
+    -- -- NOTE: You'll need to implement a way to save & load changes for your extension options, similar to Tracker's Settings.ini file
+    -- function self.configureOptions()
+    --     -- [ADD CODE HERE]
+    -- end
 
     return self
 end
