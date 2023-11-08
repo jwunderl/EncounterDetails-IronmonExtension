@@ -454,7 +454,7 @@ local function EncounterDetailsExtension()
     }
 
     local trackerBtnBox = {
-        Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 72, -- x
+        Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 80, -- x
         Constants.SCREEN.MARGIN + 10, -- y
         15, -- w
         12 -- h
