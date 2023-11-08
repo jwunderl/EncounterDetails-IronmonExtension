@@ -8,7 +8,59 @@ local function EncounterDetailsExtension()
     self.github = "jwunderl/EncounterDetails-IronmonExtension"
     self.url = string.format("https://github.com/%s", self.github or "")
 
+    -- encounterData = Map<pokemonId, {
+    --      w: List<encounter>, -- wild encounters
+    --      t: List<encounter>  -- trainer encounters
+    -- }>
+    -- encounter = {
+    --      t: number, -- timestamp
+    --      l: number, -- level of encounter
+    -- }
+
     self.encounterData = nil
+    self.serializationKey = "EncounterDetails" .. FileManager.Extensions.TRACKED_DATA
+
+    local function serializeData()
+        local filepath = FileManager.prependDir(self.serializationKey)
+        FileManager.writeTableToFile(self.encounterData, filename)
+    end
+
+    local function deserializeData()
+        local filepath = FileManager.prependDir(self.serializationKey)
+        local fileData = FileManager.readTableFromFile(filepath)
+        -- todo error handling I suppose, though just ignoring... might be all it can do anyways
+        self.encounterData = fileData or {}
+    end
+
+    local function getEncounterData(pokemonID)
+        local pokemonBucket = self.encounterData[pokemonID]
+
+        if pokemonBucket == nil then
+            pokemonBucket = {}
+            self.encounterData[pokemonID] = pokemonBucket
+        end
+
+        return pokemonBucket
+    end
+
+    local function trackEncounter(pokemon, isWild)
+        local encounters = getEncounterData(pokemon.pokemonID)
+        local bucket
+
+        if isWild then
+            if encounters.w == nil then
+                encounters.w = {}
+            end
+            bucket = encounters.w
+        else
+            if encounters.t == nil then
+                encounters.t = {}
+            end
+            bucket = encounters.t
+        end
+
+        table.insert(bucket, {t = os.time(), l = pokemon.level})
+    end
 
     --
     ------------------------------------ Encounter Details Screen ------------------------------------
@@ -189,15 +241,6 @@ local function EncounterDetailsExtension()
     end
 
     function PreviousEncountersScreen.createButtons()
-        function padEnd(inp, targetLength, char)
-            if char == nil then
-                char = " "
-            end
-            -- todo: padding with " " doesn't line up as space a little thinner than others;
-            -- does this need to be manually rendered instead of aligned?
-            return inp .. string.rep(char, targetLength - (#inp))
-        end
-
         local startX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
         local startY = Constants.SCREEN.MARGIN + OFFSET_FOR_NAME
         local tabPadding = 5
@@ -205,7 +248,6 @@ local function EncounterDetailsExtension()
         -- TABS
         for _, tab in ipairs(Utils.getSortedList(SCREEN.Tabs)) do
             local tabText = tab.tabKey
-            -- local tabText = Resources.PreviousEncountersScreen[tab.resourceKey]
             local tabWidth = (tabPadding * 2) + Utils.calcWordPixelLength(tabText)
             SCREEN.Buttons["Tab" .. tab.tabKey] = {
                 type = Constants.ButtonTypes.NO_BORDER,
@@ -392,7 +434,7 @@ local function EncounterDetailsExtension()
         0xFFEB7069, -- dark pink
         0xFFFFFFFF -- white
     }
-    local heartPixelImage = {
+    local piggyPixelImage = {
         -- 15x12
         {0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0},
         {1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1},
@@ -428,7 +470,7 @@ local function EncounterDetailsExtension()
         end,
         draw = function()
             local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
-            Drawing.drawImageAsPixels(heartPixelImage, trackerBtnBox[1], trackerBtnBox[2], pigColors, shadowcolor)
+            Drawing.drawImageAsPixels(piggyPixelImage, trackerBtnBox[1], trackerBtnBox[2], pigColors, shadowcolor)
         end,
         onClick = function()
             local pokemon = Tracker.getViewedPokemon() or {}
@@ -489,9 +531,9 @@ local function EncounterDetailsExtension()
         if not Main.IsOnBizhawk() then
             return
         end
+        deserializeData()
         PreviousEncountersScreen.initialize()
         TrackerScreen.Buttons.EncounterDetails = trackerBtn
-        -- [ADD CODE HERE]
     end
 
     -- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
@@ -500,6 +542,7 @@ local function EncounterDetailsExtension()
             return
         end
         TrackerScreen.Buttons.EncounterDetails = nil
+        serializeData()
     end
 
     -- Executed once every 30 frames or after any redraw event is scheduled (i.e. most button presses)
@@ -537,6 +580,8 @@ local function EncounterDetailsExtension()
     -- Executed after a battle ends, and only once per battle
     function self.afterBattleEnds()
         -- [ADD CODE HERE]
+
+        serializeData()
     end
 
     -- [Bizhawk only] Executed each frame (60 frames per second)
