@@ -108,8 +108,6 @@ local function EncounterDetailsExtension()
     local TAB_HEIGHT = 12
     local OFFSET_FOR_NAME = 8
 
-    -- TODO: probably should close this screen automatically when opposing pokemon changes
-    --		or encounter ends. Maybe this goes into InfoScreen to handle that?
     SCREEN.Buttons = {
         NameLabel = {
             type = Constants.ButtonTypes.NO_BORDER,
@@ -375,18 +373,20 @@ local function EncounterDetailsExtension()
         SCREEN.Pager:realignButtonsToGrid()
     end
 
-    function PreviousEncountersScreen.changeTab(tab)
-        SCREEN.currentTab = tab
+    local function rebuild()
         SCREEN.buildPagedButtons(tab)
         SCREEN.refreshButtons()
         Program.redraw(true)
     end
 
+    function PreviousEncountersScreen.changeTab(tab)
+        SCREEN.currentTab = tab
+        rebuild()
+    end
+
     function PreviousEncountersScreen.changePokemonID(pokemonID)
         SCREEN.currentPokemonID = pokemonID
-        SCREEN.buildPagedButtons(tab)
-        SCREEN.refreshButtons()
-        Program.redraw(true)
+        rebuild()
     end
 
     -- USER INPUT FUNCTIONS
@@ -552,6 +552,7 @@ local function EncounterDetailsExtension()
         if Battle.isGhost then
             return
         end
+
         local enemyTeam = Battle.BattleParties[1]
 
         for slot, mon in ipairs(enemyTeam) do
@@ -559,9 +560,11 @@ local function EncounterDetailsExtension()
                 enemyPokemonMarkedEncountered[slot] = true
                 local toTrack = Tracker.getPokemon(slot, false)
                 trackEncounter(toTrack, Battle.isWildEncounter)
+                if Program.currentScreen == PreviousEncountersScreen then
+                    rebuild()
+                end
             end
         end
-        -- [ADD CODE HERE]
     end
 
     -- Executed after a new battle begins (wild or trainer), and only once per battle
