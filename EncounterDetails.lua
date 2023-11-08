@@ -21,7 +21,8 @@ local function EncounterDetailsExtension()
         FileManager.Folders.Custom .. FileManager.slash .. self.name .. FileManager.Extensions.TRACKED_DATA
 
     local function serializeData()
-        local filepath = FileManager.prependDir(self.serializationKey)
+        local filepath = self.serializationKey
+        print(filepath)
         local persistedData = {
             h = GameSettings.getRomHash(),
             e = self.encounterData
