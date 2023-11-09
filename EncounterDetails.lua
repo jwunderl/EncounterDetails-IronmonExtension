@@ -18,7 +18,8 @@ local function EncounterDetailsExtension()
     -- }
     self.encounterData = nil
     self.serializationKey =
-        FileManager.Folders.Custom .. FileManager.slash .. self.name .. FileManager.Extensions.TRACKED_DATA
+        FileManager.Folders.Custom ..
+        FileManager.slash .. GameSettings.getRomName():gsub(" ", "") .. self.name .. FileManager.Extensions.TRACKED_DATA
 
     local function serializeData()
         local filepath = self.serializationKey
