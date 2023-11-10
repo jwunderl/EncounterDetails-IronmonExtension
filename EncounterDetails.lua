@@ -21,6 +21,11 @@ local function EncounterDetailsExtension()
 		FileManager.Folders.Custom ..
 		FileManager.slash .. GameSettings.getRomName():gsub(" ", "") .. self.name .. FileManager.Extensions.TRACKED_DATA
 
+	local extensionSettings = {
+		noPiggy = false,
+		ignoreWilds = false,
+	}
+
 	local function serializeData()
 		local filepath = self.serializationKey
 		local persistedData = {
@@ -246,8 +251,15 @@ local function EncounterDetailsExtension()
 		local startY = Constants.SCREEN.MARGIN + OFFSET_FOR_NAME
 		local tabPadding = 5
 
+		local tabsToCreate
+		if extensionSettings.ignoreWilds then
+			tabsToCreate = { SCREEN.Tabs.Trainer }
+		else
+			tabsToCreate = Utils.getSortedList(SCREEN.Tabs)
+		end
+
 		-- TABS
-		for _, tab in ipairs(Utils.getSortedList(SCREEN.Tabs)) do
+		for _, tab in ipairs(tabsToCreate) do
 			local tabText = tab.tabKey
 			local tabWidth = (tabPadding * 2) + Utils.calcWordPixelLength(tabText)
 			SCREEN.Buttons["Tab" .. tab.tabKey] = {
@@ -278,9 +290,9 @@ local function EncounterDetailsExtension()
 							Drawing.ColorEffects.DARKEN
 						)
 					end
-					gui.drawLine(x + 1, y, x + w - 1, y, color)               -- Top edge
-					gui.drawLine(x, y + 1, x, y + h - 1, color)               -- Left edge
-					gui.drawLine(x + w, y + 1, x + w, y + h - 1, color)       -- Right edge
+					gui.drawLine(x + 1, y, x + w - 1, y, color) -- Top edge
+					gui.drawLine(x, y + 1, x, y + h - 1, color) -- Left edge
+					gui.drawLine(x + w, y + 1, x + w, y + h - 1, color) -- Right edge
 					if self.isSelected then
 						gui.drawLine(x + 1, y + h, x + w - 1, y + h, bgColor) -- Remove bottom edge
 					end
@@ -300,7 +312,10 @@ local function EncounterDetailsExtension()
 		SCREEN.Pager.Buttons = {}
 
 		local tabContents = {}
-		local encounters = getEncounterData(SCREEN.currentPokemonID)
+		local encounters
+		if SCREEN.currentPokemonID ~= nil then
+			encounters = getEncounterData(SCREEN.currentPokemonID)
+		end
 		local wildEncounters = encounters.w or {}
 		local trainerEncounters = encounters.t or {}
 
@@ -375,7 +390,7 @@ local function EncounterDetailsExtension()
 	end
 
 	local function rebuild()
-		SCREEN.buildPagedButtons(tab)
+		SCREEN.buildPagedButtons()
 		SCREEN.refreshButtons()
 		Program.redraw(true)
 	end
@@ -436,7 +451,7 @@ local function EncounterDetailsExtension()
 		0xFFEAC3CE, -- pale pink
 		0xFFFF0000, -- red
 		0xFFEB7069, -- dark pink
-		0xFFFFFFFF  -- white
+		0xFFFFFFFF -- white
 	}
 	local piggyPixelImage = {
 		-- 15x12
@@ -456,16 +471,17 @@ local function EncounterDetailsExtension()
 
 	local piggyBtnBox = {
 		Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 80, -- x
-		Constants.SCREEN.MARGIN + 10,                          -- y
-		15,                                                    -- w
-		12                                                     -- h
+		Constants.SCREEN.MARGIN + 10,                    -- y
+		15,                                              -- w
+		12                                               -- h
 	}
 
 	local shouldShowTrackerBtn = function()
 		local viewedPokemon = Battle.getViewedPokemon(true) or {}
 		local viewingOpponentInBattle =
 			Program.currentScreen == TrackerScreen and Battle.inActiveBattle() and not Battle.isViewingOwn and
-			PokemonData.isValid(viewedPokemon.pokemonID)
+			PokemonData.isValid(viewedPokemon.pokemonID) and
+			not (extensionSettings.ignoreWilds and Battle.isWildEncounter)
 		return viewingOpponentInBattle
 	end
 
@@ -538,9 +554,16 @@ local function EncounterDetailsExtension()
 		if not Main.IsOnBizhawk() then
 			return
 		end
+
+		extensionSettings.noPiggy = TrackerAPI.getExtensionSetting(self.name, "noPiggy") or false
+		extensionSettings.ignoreWilds = TrackerAPI.getExtensionSetting(self.name, "ignoreWilds") or false
+
 		deserializeData()
 		PreviousEncountersScreen.initialize()
-		TrackerScreen.Buttons.EncounterDetails = trackerPigBtn
+
+		if not extensionSettings.noPiggy then
+			TrackerScreen.Buttons.EncounterDetails = trackerPigBtn
+		end
 		TrackerScreen.Buttons.InvisibleEncounterDetails = invisibleTextOverlayBtn
 	end
 
@@ -550,7 +573,7 @@ local function EncounterDetailsExtension()
 			return
 		end
 		TrackerScreen.Buttons.EncounterDetails = nil
-		TrackerScreen.Buttons.InvisibleEncounterDetails = invisibleTextOverlayBtn
+		TrackerScreen.Buttons.InvisibleEncounterDetails = nil
 		serializeData()
 	end
 
@@ -561,7 +584,9 @@ local function EncounterDetailsExtension()
 		end
 		if TrackerScreen.Buttons.EncounterDetails ~= nil and TrackerScreen.Buttons.EncounterDetails:isVisible() then
 			local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
-			Drawing.drawButton(TrackerScreen.Buttons.EncounterDetails, shadowcolor)
+			if not extensionSettings.noPiggy then
+				Drawing.drawButton(TrackerScreen.Buttons.EncounterDetails, shadowcolor)
+			end
 			Drawing.drawButton(TrackerScreen.Buttons.InvisibleEncounterDetails, shadowcolor)
 		end
 	end
@@ -571,6 +596,9 @@ local function EncounterDetailsExtension()
 	-- Executed once every 30 frames, after any battle related data from game memory is read in
 	function self.afterBattleDataUpdate()
 		if Battle.isGhost then
+			return
+		end
+		if Battle.isWildEncounter and extensionSettings.ignoreWilds then
 			return
 		end
 
@@ -640,9 +668,30 @@ local function EncounterDetailsExtension()
 	-- -- Executed when the user clicks the "Options" button while viewing the extension details within the Tracker's UI
 	-- -- Remove this function if you choose not to include a way for the user to configure options for your extension
 	-- -- NOTE: You'll need to implement a way to save & load changes for your extension options, similar to Tracker's Settings.ini file
-	-- function self.configureOptions()
-	--     -- [ADD CODE HERE]
-	-- end
+	function self.configureOptions()
+		if not Main.IsOnBizhawk() then return end
+		Program.destroyActiveForm()
+		local form = forms.newform(320, 130, "Encounter Details Settings", function() client.unpause() end)
+		Utils.setFormLocation(form, 100, 50)
+
+		local noPiggySelection = forms.checkbox(form, "no piggy : (", 10, 30)
+		local ignoreWildsSelection = forms.checkbox(form, "ignore wilds", 10, 50)
+
+		forms.button(form, "Save", function()
+			extensionSettings.ignoreWilds = forms.ischecked(ignoreWildsSelection)
+			extensionSettings.noPiggy = forms.ischecked(noPiggySelection)
+
+			TrackerAPI.saveExtensionSetting(self.name, "ignoreWilds", extensionSettings.ignoreWilds)
+			TrackerAPI.saveExtensionSetting(self.name, "noPiggy", extensionSettings.noPiggy)
+
+			client.unpause()
+			forms.destroy(form)
+		end, 90, 70)
+		forms.button(form, "Cancel", function()
+			client.unpause()
+			forms.destroy(form)
+		end, 10, 70)
+	end
 
 	return self
 end
