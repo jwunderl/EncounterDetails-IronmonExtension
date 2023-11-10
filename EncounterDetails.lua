@@ -251,11 +251,16 @@ local function EncounterDetailsExtension()
 		local startY = Constants.SCREEN.MARGIN + OFFSET_FOR_NAME
 		local tabPadding = 5
 
+		local allTabs = Utils.getSortedList(SCREEN.Tabs)
+		for _, tab in ipairs(allTabs) do
+			SCREEN.Buttons["Tab" .. tab.tabKey] = nil
+		end
+
 		local tabsToCreate
 		if extensionSettings.ignoreWilds then
 			tabsToCreate = { SCREEN.Tabs.Trainer }
 		else
-			tabsToCreate = Utils.getSortedList(SCREEN.Tabs)
+			tabsToCreate = allTabs
 		end
 
 		-- TABS
@@ -673,6 +678,7 @@ local function EncounterDetailsExtension()
 		Program.destroyActiveForm()
 		local form = forms.newform(320, 130, "Encounter Details Settings", function() client.unpause() end)
 		Utils.setFormLocation(form, 100, 50)
+		local ignoreWildsOriginal = extensionSettings.ignoreWilds
 
 		local noPiggySelection = forms.checkbox(form, "no piggy : (", 10, 30)
 		local ignoreWildsSelection = forms.checkbox(form, "ignore wilds", 10, 50)
@@ -684,6 +690,9 @@ local function EncounterDetailsExtension()
 			TrackerAPI.saveExtensionSetting(self.name, "ignoreWilds", extensionSettings.ignoreWilds)
 			TrackerAPI.saveExtensionSetting(self.name, "noPiggy", extensionSettings.noPiggy)
 
+			if ignoreWildsOriginal ~= extensionSettings.ignoreWilds then
+				SCREEN.initialize()
+			end
 			client.unpause()
 			forms.destroy(form)
 		end, 90, 70)
