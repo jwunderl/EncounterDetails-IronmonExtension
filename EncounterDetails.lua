@@ -566,9 +566,7 @@ local function EncounterDetailsExtension()
 		deserializeData()
 		PreviousEncountersScreen.initialize()
 
-		if not extensionSettings.noPiggy then
-			TrackerScreen.Buttons.EncounterDetails = trackerPigBtn
-		end
+		TrackerScreen.Buttons.EncounterDetails = trackerPigBtn
 		TrackerScreen.Buttons.InvisibleEncounterDetails = invisibleTextOverlayBtn
 	end
 
