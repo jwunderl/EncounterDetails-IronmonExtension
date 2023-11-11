@@ -415,7 +415,7 @@ local function EncounterDetailsExtension()
 		rebuild()
 	end
 
-	function PreviousEncountersScreen.openPokemonSelectWindow()
+	function PreviousEncountersScreen.openPokemonSelectWindow(cb)
 		local form = Utils.createBizhawkForm(Resources.AllScreens.Lookup, 360, 105)
 
 		local pokemonName
@@ -442,6 +442,9 @@ local function EncounterDetailsExtension()
 				Program.redraw(true)
 			end
 			Utils.closeBizhawkForm(form)
+			if cb ~= nil then
+				cb()
+			end
 		end, 212, 29)
 	end
 
@@ -509,7 +512,7 @@ local function EncounterDetailsExtension()
 		{ 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0 }
 	}
 
-	local piggyBtnBox = {
+	local trackerPiggyBtnBox = {
 		Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 80, -- x
 		Constants.SCREEN.MARGIN + 10,                    -- y
 		15,                                              -- w
@@ -545,11 +548,12 @@ local function EncounterDetailsExtension()
 	local trackerPigBtn = {
 		type = Constants.ButtonTypes.PIXELIMAGE,
 		textColor = "Default text",
-		box = piggyBtnBox,
+		box = trackerPiggyBtnBox,
 		isVisible = shouldShowTrackerBtn,
 		draw = function()
 			local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
-			Drawing.drawImageAsPixels(piggyPixelImage, piggyBtnBox[1], piggyBtnBox[2], pigColors, shadowcolor)
+			Drawing.drawImageAsPixels(piggyPixelImage, trackerPiggyBtnBox[1], trackerPiggyBtnBox[2], pigColors,
+				shadowcolor)
 		end,
 		onClick = onShowEncounterDetails
 	}
@@ -565,6 +569,35 @@ local function EncounterDetailsExtension()
 		},
 		isVisible = shouldShowTrackerBtn,
 		onClick = onShowEncounterDetails
+	}
+
+	local extensionPiggyBtnBox = {
+		Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 120, -- x
+		Constants.SCREEN.MARGIN + 4,                      -- y
+		15,                                               -- w
+		12                                                -- h
+	}
+	local extensionPagePigBtn = {
+		type = Constants.ButtonTypes.PIXELIMAGE,
+		textColor = "Default text",
+		box = extensionPiggyBtnBox,
+		isVisible = function()
+			local extensionScreenIsDisplayed = Program.currentScreen == SingleExtensionScreen and
+				SingleExtensionScreen.extensionKey == self.name
+			return extensionScreenIsDisplayed
+		end,
+		draw = function()
+			local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
+			Drawing.drawImageAsPixels(piggyPixelImage, extensionPiggyBtnBox[1], extensionPiggyBtnBox[2], pigColors,
+				shadowcolor)
+		end,
+		onClick = function()
+			SCREEN.openPokemonSelectWindow(function()
+				if PokemonData.isValid(SCREEN.currentPokemonID) then
+					Program.changeScreenView(PreviousEncountersScreen)
+				end
+			end)
+		end
 	}
 
 	--------------------------------------
@@ -603,6 +636,7 @@ local function EncounterDetailsExtension()
 
 		TrackerScreen.Buttons.EncounterDetails = trackerPigBtn
 		TrackerScreen.Buttons.InvisibleEncounterDetails = invisibleTextOverlayBtn
+		SingleExtensionScreen.Buttons.EncounterDetails = extensionPagePigBtn
 	end
 
 	-- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
@@ -612,6 +646,7 @@ local function EncounterDetailsExtension()
 		end
 		TrackerScreen.Buttons.EncounterDetails = nil
 		TrackerScreen.Buttons.InvisibleEncounterDetails = nil
+		SingleExtensionScreen.Buttons.EncounterDetails = nil
 		serializeData()
 	end
 
@@ -626,6 +661,10 @@ local function EncounterDetailsExtension()
 				Drawing.drawButton(TrackerScreen.Buttons.EncounterDetails, shadowcolor)
 			end
 			Drawing.drawButton(TrackerScreen.Buttons.InvisibleEncounterDetails, shadowcolor)
+		end
+		if SingleExtensionScreen.Buttons.EncounterDetails ~= nil and SingleExtensionScreen.Buttons.EncounterDetails:isVisible() then
+			local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
+			Drawing.drawButton(SingleExtensionScreen.Buttons.EncounterDetails, shadowcolor)
 		end
 	end
 
