@@ -598,17 +598,14 @@ local function EncounterDetailsExtension()
 
 	-- Executed once every 30 frames, after any battle related data from game memory is read in
 	function self.afterBattleDataUpdate()
-		if Battle.isGhost then
-			return
-		end
-		if Battle.isWildEncounter and extensionSettings.ignoreWilds then
+		if enemyPokemonMarkedEncountered == nil then
 			return
 		end
 
 		local enemyTeam = Battle.BattleParties[1]
 
 		for slot, mon in ipairs(enemyTeam) do
-			if mon.seenAlready and enemyPokemonMarkedEncountered and not enemyPokemonMarkedEncountered[slot] then
+			if mon.seenAlready and not enemyPokemonMarkedEncountered[slot] then
 				enemyPokemonMarkedEncountered[slot] = true
 				local toTrack = Tracker.getPokemon(slot, false)
 				trackEncounter(toTrack, Battle.isWildEncounter)
@@ -621,17 +618,28 @@ local function EncounterDetailsExtension()
 
 	-- Executed after a new battle begins (wild or trainer), and only once per battle
 	function self.afterBattleBegins()
+		if Battle.isGhost then
+			return
+		end
+		if Battle.isWildEncounter and extensionSettings.ignoreWilds then
+			return
+		end
+
 		enemyPokemonMarkedEncountered = {}
 	end
 
 	-- Executed after a battle ends, and only once per battle
 	function self.afterBattleEnds()
-		enemyPokemonMarkedEncountered = nil
-
 		if Program.currentScreen == PreviousEncountersScreen then
 			Program.changeScreenView(TrackerScreen)
 		end
 
+		if enemyPokemonMarkedEncountered == nil then
+			-- tracked data did not change, do not save
+			return
+		end
+
+		enemyPokemonMarkedEncountered = nil
 		serializeData()
 	end
 
