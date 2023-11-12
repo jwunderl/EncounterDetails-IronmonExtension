@@ -33,6 +33,9 @@ local function EncounterDetailsExtension()
 
 	local function reformatSqlReadResult(res)
 		local output = {}
+		if res == "No rows found" then
+			return output
+		end
 
 		for key, value in pairs(res) do
 			local gmatchRes = string.gmatch(key, "[^%s]+")
