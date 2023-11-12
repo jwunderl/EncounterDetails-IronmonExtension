@@ -81,7 +81,9 @@ local function EncounterDetailsExtension()
 		if fileData == nil or fileData.h ~= currGameHash then
 			local dropTableCommand = "DROP TABLE IF EXISTS " .. self.encounterTableKey
 			local encounterTableCreateCommand = listToSqlCmd({
-				"CREATE TABLE IF NOT EXISTS " .. self.encounterTableKey .. " (",
+				"CREATE TABLE IF NOT EXISTS",
+				self.encounterTableKey,
+				"(",
 				"pokemonid INTEGER,",
 				"timestamp INTEGER,",
 				"level INTEGER,",
@@ -91,7 +93,7 @@ local function EncounterDetailsExtension()
 			local createIndexCommand = listToSqlCmd({
 				"CREATE INDEX POKEMON_ID ON",
 				self.encounterTableKey,
-				" ( pokemonid )"
+				"( pokemonid )"
 			})
 			SQL.writecommand(dropTableCommand)
 			SQL.writecommand(encounterTableCreateCommand)
@@ -104,7 +106,7 @@ local function EncounterDetailsExtension()
 
 	local function getEncounterData(pokemonID, wildCheck)
 		local readEncounterDataCommand = listToSqlCmd({
-			"SELECT * ",
+			"SELECT *",
 			"FROM",
 			self.encounterTableKey,
 			"WHERE",
@@ -119,12 +121,12 @@ local function EncounterDetailsExtension()
 
 	local function trackEncounter(pokemon, isWild)
 		local trackEncounterCommand = listToSqlCmd({
-			"INSERT INTO ",
+			"INSERT INTO",
 			self.encounterTableKey,
-			" (pokemonid, timestamp, level, iswild) VALUES (",
-			pokemon.pokemonID, ", ",
-			os.time(), ", ",
-			pokemon.level, ", ",
+			"(pokemonid, timestamp, level, iswild) VALUES (",
+			pokemon.pokemonID, ",",
+			os.time(), ",",
+			pokemon.level, ",",
 			Utils.inlineIf(isWild, "1", "0"),
 			")"
 		})
