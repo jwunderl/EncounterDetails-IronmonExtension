@@ -176,6 +176,19 @@ local function EncounterDetailsExtension()
 				SCREEN.openPokemonSelectWindow()
 			end
 		},
+		CurrentTimeLabel = {
+			type = Constants.ButtonTypes.NO_BORDER,
+			getText = function(self)
+				local currentTime = os.time()
+				return os.date("%b%d, %I:%M:%S%p", currentTime)
+			end,
+			box = {
+				Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 64,
+				Constants.SCREEN.MARGIN - 4,
+				50,
+				10
+			},
+		},
 		CurrentPage = {
 			type = Constants.ButtonTypes.NO_BORDER,
 			getText = function(self)
