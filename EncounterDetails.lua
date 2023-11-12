@@ -9,14 +9,6 @@ local function EncounterDetailsExtension()
 	self.url = string.format("https://github.com/%s", self.github or "")
 
 	local DB_SUFFIX = ".db"
-	-- encounterData = Map<pokemonId, {
-	--      w: List<encounter>, -- wild encounters
-	--      t: List<encounter>  -- trainer encounters
-	-- }>
-	-- encounter = {
-	--      t: number, -- timestamp
-	--      l: number, -- level of encounter
-	-- }
 	self.serializationKey =
 		FileManager.Folders.Custom ..
 		FileManager.slash .. GameSettings.getRomName():gsub(" ", "") .. self.name .. FileManager.Extensions.TRACKED_DATA
