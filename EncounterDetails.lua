@@ -373,10 +373,10 @@ local function EncounterDetailsExtension()
 		end
 
 		local trackerCenterX = Constants.SCREEN.WIDTH + (Constants.SCREEN.RIGHT_GAP / 2)
-		local encounterButtonWidth = 100
+		local encounterButtonWidth = 110
 		for _, encounter in ipairs(encounters) do
 			local levelText = "Lv." .. encounter.level
-			local encounterTime = os.date("%b %d,  %I:%M %p", encounter.timestamp)
+			local encounterTime = os.date("%b %d,  %I:%M:%S %p", encounter.timestamp)
 			local button = {
 				type = Constants.ButtonTypes.NO_BORDER,
 				tab = tab,
