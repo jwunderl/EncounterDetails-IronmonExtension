@@ -61,32 +61,37 @@ local function EncounterDetailsExtension()
 		local currGameHash = GameSettings.getRomHash()
 
 		SQL.opendatabase(self.dbKey)
-		if TrackerAPI.getExtensionSetting(self.name, "savedHash") ~= currGameHash then
-			local dropTableCommand = "DROP TABLE IF EXISTS " .. self.encounterTableKey
-			local encounterTableCreateCommand = listToSqlCmd({
-				"CREATE TABLE IF NOT EXISTS",
-				self.encounterTableKey,
-				"(",
-				"pokemonid INTEGER,",
-				"timestamp INTEGER,",
-				"level INTEGER,",
-				"iswild INTEGER", -- BOOLEAN: 1 true, 0 false
-				");"
-			})
 
-			local createIndexCommand = listToSqlCmd({
-				"CREATE INDEX POKEMON_ID ON",
-				self.encounterTableKey,
-				"( pokemonid )"
+		if TrackerAPI.getExtensionSetting(self.name, "savedHash") ~= currGameHash then
+			local dropTableCommand = listToSqlCmd({
+				"DROP TABLE IF EXISTS",
+				self.encounterTableKey
 			})
 
 			SQL.writecommand(dropTableCommand)
-			SQL.writecommand(encounterTableCreateCommand)
-			SQL.writecommand(createIndexCommand)
-
-			TrackerAPI.saveExtensionSetting(self.name, "savedHash", GameSettings.getRomHash())
-			return
 		end
+
+		local encounterTableCreateCommand = listToSqlCmd({
+			"CREATE TABLE IF NOT EXISTS",
+			self.encounterTableKey,
+			"(",
+			"pokemonid INTEGER,",
+			"timestamp INTEGER,",
+			"level INTEGER,",
+			"iswild INTEGER", -- BOOLEAN: 1 true, 0 false
+			");"
+		})
+
+		local createIndexCommand = listToSqlCmd({
+			"CREATE INDEX POKEMON_ID ON",
+			self.encounterTableKey,
+			"( pokemonid )"
+		})
+
+		SQL.writecommand(encounterTableCreateCommand)
+		SQL.writecommand(createIndexCommand)
+
+		TrackerAPI.saveExtensionSetting(self.name, "savedHash", GameSettings.getRomHash())
 	end
 
 	local function getEncounterData(pokemonID, wildCheck)
