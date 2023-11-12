@@ -33,6 +33,7 @@ local function EncounterDetailsExtension()
 
 	local function reformatSqlReadResult(res)
 		local output = {}
+
 		if res == "No rows found" then
 			return output
 		end
@@ -585,7 +586,7 @@ local function EncounterDetailsExtension()
 	local invisibleTextOverlayBtn = {
 		-- Invisible clickable button
 		type = Constants.ButtonTypes.NO_BORDER,
-		box = { -- TODO does this need to be changed for trainer encounter screen? in that case do we have to dup it?
+		box = {
 			Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 33,
 			Constants.SCREEN.MARGIN + 10 + 12,
 			60,
@@ -668,6 +669,7 @@ local function EncounterDetailsExtension()
 		if not Main.IsOnBizhawk() then
 			return
 		end
+
 		TrackerScreen.Buttons.EncounterDetails = nil
 		TrackerScreen.Buttons.InvisibleEncounterDetails = nil
 		SingleExtensionScreen.Buttons.EncounterDetails = nil
@@ -678,6 +680,7 @@ local function EncounterDetailsExtension()
 		if not Main.IsOnBizhawk() then
 			return
 		end
+
 		if TrackerScreen.Buttons.EncounterDetails ~= nil and TrackerScreen.Buttons.EncounterDetails:isVisible() then
 			local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
 			if not extensionSettings.noPiggy then
@@ -685,6 +688,7 @@ local function EncounterDetailsExtension()
 			end
 			Drawing.drawButton(TrackerScreen.Buttons.InvisibleEncounterDetails, shadowcolor)
 		end
+
 		if SingleExtensionScreen.Buttons.EncounterDetails ~= nil and SingleExtensionScreen.Buttons.EncounterDetails:isVisible() then
 			local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
 			Drawing.drawButton(SingleExtensionScreen.Buttons.EncounterDetails, shadowcolor)
@@ -729,11 +733,6 @@ local function EncounterDetailsExtension()
 	function self.afterBattleEnds()
 		if Program.currentScreen == PreviousEncountersScreen then
 			Program.changeScreenView(TrackerScreen)
-		end
-
-		if enemyPokemonMarkedEncountered == nil then
-			-- tracked data did not change, do not save
-			return
 		end
 
 		enemyPokemonMarkedEncountered = nil
