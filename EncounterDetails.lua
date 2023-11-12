@@ -8,6 +8,7 @@ local function EncounterDetailsExtension()
 	self.github = "jwunderl/EncounterDetails-IronmonExtension"
 	self.url = string.format("https://github.com/%s", self.github or "")
 
+	local DB_SUFFIX = ".db"
 	-- encounterData = Map<pokemonId, {
 	--      w: List<encounter>, -- wild encounters
 	--      t: List<encounter>  -- trainer encounters
@@ -16,66 +17,127 @@ local function EncounterDetailsExtension()
 	--      t: number, -- timestamp
 	--      l: number, -- level of encounter
 	-- }
-	self.encounterData = nil
 	self.serializationKey =
 		FileManager.Folders.Custom ..
 		FileManager.slash .. GameSettings.getRomName():gsub(" ", "") .. self.name .. FileManager.Extensions.TRACKED_DATA
-
+	self.dbKey =
+		FileManager.prependDir(FileManager.Folders.Custom ..
+			FileManager.slash .. GameSettings.getRomName():gsub(" ", "") .. self.name .. DB_SUFFIX)
+	self.encounterTableKey = self.name .. "Encounters"
 	local extensionSettings = {
 		noPiggy = false,
 		ignoreWilds = false,
 	}
 
+	local function dumpTable(o)
+		if type(o) == 'table' then
+			local s = '{ '
+			for k, v in pairs(o) do
+				if type(k) ~= 'number' then k = '"' .. k .. '"' end
+				s = s .. '[' .. k .. '] = ' .. dumpTable(v) .. ','
+			end
+			return s .. '} '
+		else
+			return tostring(o)
+		end
+	end
+
+	local function reformatSqlReadResult(res)
+		local output = {}
+
+		for key, value in pairs(res) do
+			local gmatchRes = string.gmatch(key, "[^%s]+")
+			local actualKey = gmatchRes()
+			local index = tonumber(gmatchRes()) + 1
+			if output[index] == nil then
+				output[index] = {}
+			end
+			output[index][actualKey] = value
+		end
+
+		return output
+	end
+
+	local function listToSqlCmd(commandParts)
+		local result = ""
+
+		for ind, part in ipairs(commandParts) do
+			result = result .. part
+			if (ind ~= #commandParts) then
+				result = result .. " "
+			end
+		end
+		return result
+	end
+
 	local function serializeData()
+		-- todo probably move this to db separate table
 		local filepath = self.serializationKey
 		local persistedData = {
-			h = GameSettings.getRomHash(),
-			e = self.encounterData
+			h = GameSettings.getRomHash()
 		}
 		FileManager.writeTableToFile(persistedData, filepath)
 	end
 
-	local function deserializeData()
+	local function loadData()
 		local filepath = FileManager.prependDir(self.serializationKey)
 		local fileData = FileManager.readTableFromFile(filepath)
 		local currGameHash = GameSettings.getRomHash()
 
-		if fileData == nil or fileData.e == nil or fileData.h ~= currGameHash then
-			self.encounterData = {}
+		-- SQL.createdatabase(self.dbKey) -- todo is this necessary
+		SQL.opendatabase(self.dbKey)
+		if fileData == nil or fileData.h ~= currGameHash then
+			local dropTableCommand = "DROP TABLE IF EXISTS " .. self.encounterTableKey
+			local encounterTableCreateCommand = listToSqlCmd({
+				"CREATE TABLE IF NOT EXISTS " .. self.encounterTableKey .. " (",
+				"pokemonid INTEGER,",
+				"timestamp INTEGER,",
+				"level INTEGER,",
+				"iswild INTEGER", -- BOOLEAN: 1 true, 0 false
+				");"
+			})
+			local createIndexCommand = listToSqlCmd({
+				"CREATE INDEX POKEMON_ID ON",
+				self.encounterTableKey,
+				" ( pokemonid )"
+			})
+			SQL.writecommand(dropTableCommand)
+			SQL.writecommand(encounterTableCreateCommand)
+			SQL.writecommand(createIndexCommand)
+			-- save updated hash, can probably just move this over to a config table to keep clean
+			serializeData()
 			return
 		end
-
-		self.encounterData = fileData.e
 	end
 
-	local function getEncounterData(pokemonID)
-		local pokemonBucket = self.encounterData[pokemonID]
-
-		if not pokemonBucket then
-			pokemonBucket = {}
-			self.encounterData[pokemonID] = pokemonBucket
-		end
-
-		return pokemonBucket
+	local function getEncounterData(pokemonID, wildCheck)
+		local readEncounterDataCommand = listToSqlCmd({
+			"SELECT * ",
+			"FROM",
+			self.encounterTableKey,
+			"WHERE",
+			"pokemonid =",
+			pokemonID,
+			wildCheck or ""
+		})
+		SQL.opendatabase(self.dbKey)
+		local res = SQL.readcommand(readEncounterDataCommand)
+		return reformatSqlReadResult(res);
 	end
 
 	local function trackEncounter(pokemon, isWild)
-		local encounters = getEncounterData(pokemon.pokemonID)
-		local bucket
-
-		if isWild then
-			if encounters.w == nil then
-				encounters.w = {}
-			end
-			bucket = encounters.w
-		else
-			if encounters.t == nil then
-				encounters.t = {}
-			end
-			bucket = encounters.t
-		end
-
-		table.insert(bucket, { t = os.time(), l = pokemon.level })
+		local trackEncounterCommand = listToSqlCmd({
+			"INSERT INTO ",
+			self.encounterTableKey,
+			" (pokemonid, timestamp, level, iswild) VALUES (",
+			pokemon.pokemonID, ", ",
+			os.time(), ", ",
+			pokemon.level, ", ",
+			Utils.inlineIf(isWild, "1", "0"),
+			")"
+		})
+		SQL.opendatabase(self.dbKey)
+		local res = SQL.writecommand(trackEncounterCommand)
 	end
 
 	--
@@ -109,8 +171,6 @@ local function EncounterDetailsExtension()
 		currentTab = nil,
 		currentPokemonID = nil
 	}
-
-
 
 	local SCREEN = PreviousEncountersScreen
 	local TAB_HEIGHT = 12
@@ -321,42 +381,28 @@ local function EncounterDetailsExtension()
 		tab = tab or SCREEN.currentTab
 		SCREEN.Pager.Buttons = {}
 
-		local tabContents = {}
+		local encountersCheck
+		if tab == SCREEN.Tabs.Wild then
+			encountersCheck = "AND iswild = 1"
+		elseif tab == SCREEN.Tabs.Trainer then
+			encountersCheck = "AND iswild = 0"
+		end
+
 		local encounters
 		if SCREEN.currentPokemonID ~= nil then
-			encounters = getEncounterData(SCREEN.currentPokemonID)
-		end
-		local wildEncounters = encounters.w or {}
-		local trainerEncounters = encounters.t or {}
-
-		if tab == SCREEN.Tabs.Wild then
-			for _, wildEncounter in ipairs(wildEncounters) do
-				table.insert(tabContents, wildEncounter)
-			end
-		elseif tab == SCREEN.Tabs.Trainer then
-			for _, trainerEncounter in ipairs(trainerEncounters) do
-				table.insert(tabContents, trainerEncounter)
-			end
-		elseif tab == SCREEN.Tabs.All then
-			for bagKey, itemGroup in pairs(encounters) do
-				if type(itemGroup) == "table" then
-					for _, encounter in pairs(itemGroup) do
-						table.insert(tabContents, encounter)
-					end
-				end
-			end
+			encounters = getEncounterData(SCREEN.currentPokemonID, encountersCheck)
 		end
 
 		local trackerCenterX = Constants.SCREEN.WIDTH + (Constants.SCREEN.RIGHT_GAP / 2)
 		local encounterButtonWidth = 100
-		for _, encounter in ipairs(tabContents) do
-			local levelText = "Lv." .. encounter.l
-			local encounterTime = os.date("%b %d,  %I:%M %p", encounter.t)
+		for _, encounter in ipairs(encounters) do
+			local levelText = "Lv." .. encounter.level
+			local encounterTime = os.date("%b %d,  %I:%M %p", encounter.timestamp)
 			local button = {
 				type = Constants.ButtonTypes.NO_BORDER,
 				tab = tab,
-				id = encounter.t,
-				sortValue = encounter.t,
+				id = encounter.timestamp,
+				sortValue = encounter.timestamp,
 				dimensions = {
 					width = encounterButtonWidth,
 					height = 11
@@ -631,7 +677,7 @@ local function EncounterDetailsExtension()
 		extensionSettings.noPiggy = TrackerAPI.getExtensionSetting(self.name, "noPiggy") or false
 		extensionSettings.ignoreWilds = TrackerAPI.getExtensionSetting(self.name, "ignoreWilds") or false
 
-		deserializeData()
+		loadData()
 		PreviousEncountersScreen.initialize()
 
 		TrackerScreen.Buttons.EncounterDetails = trackerPigBtn
@@ -647,7 +693,6 @@ local function EncounterDetailsExtension()
 		TrackerScreen.Buttons.EncounterDetails = nil
 		TrackerScreen.Buttons.InvisibleEncounterDetails = nil
 		SingleExtensionScreen.Buttons.EncounterDetails = nil
-		serializeData()
 	end
 
 	-- Executed once every 30 frames or after any redraw event is scheduled (i.e. most button presses)
@@ -714,7 +759,6 @@ local function EncounterDetailsExtension()
 		end
 
 		enemyPokemonMarkedEncountered = nil
-		serializeData()
 	end
 
 	-- -- Executed once every 30 frames, after most data from game memory is read in
