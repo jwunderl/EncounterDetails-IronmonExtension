@@ -9,9 +9,6 @@ local function EncounterDetailsExtension()
 	self.url = string.format("https://github.com/%s", self.github or "")
 
 	local DB_SUFFIX = ".db"
-	self.serializationKey =
-		FileManager.Folders.Custom ..
-		FileManager.slash .. GameSettings.getRomName():gsub(" ", "") .. self.name .. FileManager.Extensions.TRACKED_DATA
 	self.dbKey =
 		FileManager.prependDir(FileManager.Folders.Custom ..
 			FileManager.slash .. GameSettings.getRomName():gsub(" ", "") .. self.name .. DB_SUFFIX)
@@ -51,34 +48,16 @@ local function EncounterDetailsExtension()
 	end
 
 	local function listToSqlCmd(commandParts)
-		local result = ""
-
-		for ind, part in ipairs(commandParts) do
-			result = result .. part
-			if (ind ~= #commandParts) then
-				result = result .. " "
-			end
-		end
-		return result
-	end
-
-	local function serializeData()
-		-- todo probably move this to db separate table
-		local filepath = self.serializationKey
-		local persistedData = {
-			h = GameSettings.getRomHash()
-		}
-		FileManager.writeTableToFile(persistedData, filepath)
+		local res = table.concat(commandParts, " ")
+		-- print(res)
+		return res
 	end
 
 	local function loadData()
-		local filepath = FileManager.prependDir(self.serializationKey)
-		local fileData = FileManager.readTableFromFile(filepath)
 		local currGameHash = GameSettings.getRomHash()
 
-		-- SQL.createdatabase(self.dbKey) -- todo is this necessary
 		SQL.opendatabase(self.dbKey)
-		if fileData == nil or fileData.h ~= currGameHash then
+		if TrackerAPI.getExtensionSetting(self.name, "savedHash") ~= currGameHash then
 			local dropTableCommand = "DROP TABLE IF EXISTS " .. self.encounterTableKey
 			local encounterTableCreateCommand = listToSqlCmd({
 				"CREATE TABLE IF NOT EXISTS",
@@ -90,16 +69,18 @@ local function EncounterDetailsExtension()
 				"iswild INTEGER", -- BOOLEAN: 1 true, 0 false
 				");"
 			})
+
 			local createIndexCommand = listToSqlCmd({
 				"CREATE INDEX POKEMON_ID ON",
 				self.encounterTableKey,
 				"( pokemonid )"
 			})
+
 			SQL.writecommand(dropTableCommand)
 			SQL.writecommand(encounterTableCreateCommand)
 			SQL.writecommand(createIndexCommand)
-			-- save updated hash, can probably just move this over to a config table to keep clean
-			serializeData()
+
+			TrackerAPI.saveExtensionSetting(self.name, "savedHash", GameSettings.getRomHash())
 			return
 		end
 	end
