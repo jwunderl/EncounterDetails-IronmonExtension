@@ -2,7 +2,7 @@
 
 Track details on encounters throughout run
 
-![Piggy button on tracker being used to show previous encounters for a mon](https://github.com/jwunderl/EncounterDetails-IronmonExtension/assets/5615930/73af98de-7d4d-4bb3-bf1c-d2cfb80d00fc)
+<img alt="Piggy button on tracker being used to show previous encounters for a mon" src="https://github.com/jwunderl/EncounterDetails-IronmonExtension/assets/5615930/73af98de-7d4d-4bb3-bf1c-d2cfb80d00fc" width="50%" height="50%"/>
 
 See https://github.com/besteon/Ironmon-Tracker/wiki/Tracker-Add-ons for details on tracker add ons.
 
