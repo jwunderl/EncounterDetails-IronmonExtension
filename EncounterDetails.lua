@@ -156,15 +156,15 @@ local function EncounterDetailsExtension()
 		currentPokemonID = nil
 	}
 
-	local SCREEN = PreviousEncountersScreen
-	local TAB_HEIGHT = 12
-	local OFFSET_FOR_NAME = 8
+	local PE_SCREEN = PreviousEncountersScreen
+	local PE_TAB_HEIGHT = 12
+	local PE_OFFSET_FOR_NAME = 8
 
-	SCREEN.Buttons = {
+	PE_SCREEN.Buttons = {
 		NameLabel = {
 			type = Constants.ButtonTypes.NO_BORDER,
 			getText = function(self)
-				return PokemonData.Pokemon[SCREEN.currentPokemonID].name
+				return PokemonData.Pokemon[PE_SCREEN.currentPokemonID].name
 			end,
 			box = {
 				Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN - 3,
@@ -173,7 +173,7 @@ local function EncounterDetailsExtension()
 				10
 			},
 			onClick = function()
-				SCREEN.openPokemonSelectWindow()
+				PE_SCREEN.openPokemonSelectWindow()
 			end
 		},
 		CurrentTimeLabel = {
@@ -192,7 +192,7 @@ local function EncounterDetailsExtension()
 		CurrentPage = {
 			type = Constants.ButtonTypes.NO_BORDER,
 			getText = function(self)
-				return SCREEN.Pager:getPageText()
+				return PE_SCREEN.Pager:getPageText()
 			end,
 			box = {
 				Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 56,
@@ -201,7 +201,7 @@ local function EncounterDetailsExtension()
 				10
 			},
 			isVisible = function()
-				return SCREEN.Pager.totalPages > 1
+				return PE_SCREEN.Pager.totalPages > 1
 			end
 		},
 		PrevPage = {
@@ -214,10 +214,10 @@ local function EncounterDetailsExtension()
 				10
 			},
 			isVisible = function()
-				return SCREEN.Pager.totalPages > 1
+				return PE_SCREEN.Pager.totalPages > 1
 			end,
 			onClick = function(self)
-				SCREEN.Pager:prevPage()
+				PE_SCREEN.Pager:prevPage()
 			end
 		},
 		NextPage = {
@@ -225,10 +225,10 @@ local function EncounterDetailsExtension()
 			image = Constants.PixelImages.RIGHT_ARROW,
 			box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 87, Constants.SCREEN.MARGIN + 137, 10, 10 },
 			isVisible = function()
-				return SCREEN.Pager.totalPages > 1
+				return PE_SCREEN.Pager.totalPages > 1
 			end,
 			onClick = function(self)
-				SCREEN.Pager:nextPage()
+				PE_SCREEN.Pager:nextPage()
 			end
 		},
 		Back = Drawing.createUIElementBackButton(
@@ -238,7 +238,7 @@ local function EncounterDetailsExtension()
 		)
 	}
 
-	SCREEN.Pager = {
+	PE_SCREEN.Pager = {
 		Buttons = {},
 		currentPage = 0,
 		totalPages = 0,
@@ -248,7 +248,7 @@ local function EncounterDetailsExtension()
 		realignButtonsToGrid = function(self)
 			table.sort(self.Buttons, self.defaultSort)
 			local x = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
-			local y = Constants.SCREEN.MARGIN + TAB_HEIGHT + OFFSET_FOR_NAME + 1
+			local y = Constants.SCREEN.MARGIN + PE_TAB_HEIGHT + PE_OFFSET_FOR_NAME + 1
 			local cutoffX = Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN
 			local cutoffY = Constants.SCREEN.HEIGHT - Constants.SCREEN.MARGIN - 10
 			local totalPages = Utils.gridAlign(self.Buttons, x, y, 2, 2, true, cutoffX, cutoffY)
@@ -279,29 +279,29 @@ local function EncounterDetailsExtension()
 	}
 
 	function PreviousEncountersScreen.initialize()
-		SCREEN.currentView = 1
-		SCREEN.currentTab = SCREEN.Tabs.All
-		SCREEN.createButtons()
+		PE_SCREEN.currentView = 1
+		PE_SCREEN.currentTab = PE_SCREEN.Tabs.All
+		PE_SCREEN.createButtons()
 
-		for _, button in pairs(SCREEN.Buttons) do
+		for _, button in pairs(PE_SCREEN.Buttons) do
 			if button.textColor == nil then
-				button.textColor = SCREEN.Colors.text
+				button.textColor = PE_SCREEN.Colors.text
 			end
 			if button.boxColors == nil then
-				button.boxColors = { SCREEN.Colors.border, SCREEN.Colors.boxFill }
+				button.boxColors = { PE_SCREEN.Colors.border, PE_SCREEN.Colors.boxFill }
 			end
 		end
 
-		SCREEN.refreshButtons()
+		PE_SCREEN.refreshButtons()
 	end
 
 	function PreviousEncountersScreen.refreshButtons()
-		for _, button in pairs(SCREEN.Buttons) do
+		for _, button in pairs(PE_SCREEN.Buttons) do
 			if button.updateSelf ~= nil then
 				button:updateSelf()
 			end
 		end
-		for _, button in pairs(SCREEN.Pager.Buttons) do
+		for _, button in pairs(PE_SCREEN.Pager.Buttons) do
 			if button.updateSelf ~= nil then
 				button:updateSelf()
 			end
@@ -310,17 +310,17 @@ local function EncounterDetailsExtension()
 
 	function PreviousEncountersScreen.createButtons()
 		local startX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
-		local startY = Constants.SCREEN.MARGIN + OFFSET_FOR_NAME
+		local startY = Constants.SCREEN.MARGIN + PE_OFFSET_FOR_NAME
 		local tabPadding = 5
 
-		local allTabs = Utils.getSortedList(SCREEN.Tabs)
+		local allTabs = Utils.getSortedList(PE_SCREEN.Tabs)
 		for _, tab in ipairs(allTabs) do
-			SCREEN.Buttons["Tab" .. tab.tabKey] = nil
+			PE_SCREEN.Buttons["Tab" .. tab.tabKey] = nil
 		end
 
 		local tabsToCreate
 		if extensionSettings.ignoreWilds then
-			tabsToCreate = { SCREEN.Tabs.Trainer }
+			tabsToCreate = { PE_SCREEN.Tabs.Trainer }
 		else
 			tabsToCreate = allTabs
 		end
@@ -329,17 +329,17 @@ local function EncounterDetailsExtension()
 		for _, tab in ipairs(tabsToCreate) do
 			local tabText = tab.tabKey
 			local tabWidth = (tabPadding * 2) + Utils.calcWordPixelLength(tabText)
-			SCREEN.Buttons["Tab" .. tab.tabKey] = {
+			PE_SCREEN.Buttons["Tab" .. tab.tabKey] = {
 				type = Constants.ButtonTypes.NO_BORDER,
 				getText = function(self)
 					return tabText
 				end,
-				tab = SCREEN.Tabs[tab.tabKey],
+				tab = PE_SCREEN.Tabs[tab.tabKey],
 				isSelected = false,
-				box = { startX, startY, tabWidth, TAB_HEIGHT },
+				box = { startX, startY, tabWidth, PE_TAB_HEIGHT },
 				updateSelf = function(self)
-					self.isSelected = (self.tab == SCREEN.currentTab)
-					self.textColor = Utils.inlineIf(self.isSelected, SCREEN.Colors.highlight, SCREEN.Colors.text)
+					self.isSelected = (self.tab == PE_SCREEN.currentTab)
+					self.textColor = Utils.inlineIf(self.isSelected, PE_SCREEN.Colors.highlight, PE_SCREEN.Colors.text)
 				end,
 				draw = function(self, shadowcolor)
 					local x, y = self.box[1], self.box[2]
@@ -367,7 +367,7 @@ local function EncounterDetailsExtension()
 					Drawing.drawText(x + centeredOffsetX, y, self:getText(), Theme.COLORS[self.textColor], shadowcolor)
 				end,
 				onClick = function(self)
-					SCREEN.changeTab(self.tab)
+					PE_SCREEN.changeTab(self.tab)
 				end
 			}
 			startX = startX + tabWidth
@@ -375,19 +375,19 @@ local function EncounterDetailsExtension()
 	end
 
 	function PreviousEncountersScreen.buildPagedButtons(tab)
-		tab = tab or SCREEN.currentTab
-		SCREEN.Pager.Buttons = {}
+		tab = tab or PE_SCREEN.currentTab
+		PE_SCREEN.Pager.Buttons = {}
 
 		local encountersCheck
-		if tab == SCREEN.Tabs.Wild then
+		if tab == PE_SCREEN.Tabs.Wild then
 			encountersCheck = "AND iswild = 1"
-		elseif tab == SCREEN.Tabs.Trainer then
+		elseif tab == PE_SCREEN.Tabs.Trainer then
 			encountersCheck = "AND iswild = 0"
 		end
 
 		local encounters
-		if SCREEN.currentPokemonID ~= nil then
-			encounters = getEncounterData(SCREEN.currentPokemonID, encountersCheck)
+		if PE_SCREEN.currentPokemonID ~= nil then
+			encounters = getEncounterData(PE_SCREEN.currentPokemonID, encountersCheck)
 		end
 
 		local trackerCenterX = Constants.SCREEN.WIDTH + (Constants.SCREEN.RIGHT_GAP / 2)
@@ -404,16 +404,16 @@ local function EncounterDetailsExtension()
 					width = encounterButtonWidth,
 					height = 11
 				},
-				textColor = SCREEN.Colors.text,
+				textColor = PE_SCREEN.Colors.text,
 				boxColors = {
-					SCREEN.Colors.border,
-					SCREEN.Colors.boxFill
+					PE_SCREEN.Colors.border,
+					PE_SCREEN.Colors.boxFill
 				},
 				isVisible = function(self)
-					return SCREEN.Pager.currentPage == self.pageVisible
+					return PE_SCREEN.Pager.currentPage == self.pageVisible
 				end,
 				includeInGrid = function(self)
-					return SCREEN.currentTab == self.tab
+					return PE_SCREEN.currentTab == self.tab
 				end,
 				-- onClick = function(self)
 				--  -- TODO if we append more info on tracked data can render state of mon at that time
@@ -437,24 +437,24 @@ local function EncounterDetailsExtension()
 					)
 				end
 			}
-			table.insert(SCREEN.Pager.Buttons, button)
+			table.insert(PE_SCREEN.Pager.Buttons, button)
 		end
-		SCREEN.Pager:realignButtonsToGrid()
+		PE_SCREEN.Pager:realignButtonsToGrid()
 	end
 
 	local function rebuild()
-		SCREEN.buildPagedButtons()
-		SCREEN.refreshButtons()
+		PE_SCREEN.buildPagedButtons()
+		PE_SCREEN.refreshButtons()
 		Program.redraw(true)
 	end
 
 	function PreviousEncountersScreen.changeTab(tab)
-		SCREEN.currentTab = tab
+		PE_SCREEN.currentTab = tab
 		rebuild()
 	end
 
 	function PreviousEncountersScreen.changePokemonID(pokemonID)
-		SCREEN.currentPokemonID = pokemonID
+		PE_SCREEN.currentPokemonID = pokemonID
 		rebuild()
 	end
 
@@ -462,8 +462,8 @@ local function EncounterDetailsExtension()
 		local form = Utils.createBizhawkForm(Resources.AllScreens.Lookup, 360, 105)
 
 		local pokemonName
-		if PokemonData.isValid(SCREEN.currentPokemonID) then -- infoLookup = pokemonID
-			pokemonName = PokemonData.Pokemon[SCREEN.currentPokemonID].name
+		if PokemonData.isValid(PE_SCREEN.currentPokemonID) then -- infoLookup = pokemonID
+			pokemonName = PokemonData.Pokemon[PE_SCREEN.currentPokemonID].name
 		else
 			pokemonName = ""
 		end
@@ -481,7 +481,7 @@ local function EncounterDetailsExtension()
 			local pokemonId = PokemonData.getIdFromName(pokemonNameFromForm)
 
 			if pokemonId ~= nil and pokemonId ~= 0 then
-				SCREEN.changePokemonID(pokemonId)
+				PE_SCREEN.changePokemonID(pokemonId)
 				Program.redraw(true)
 			end
 			Utils.closeBizhawkForm(form)
@@ -493,8 +493,8 @@ local function EncounterDetailsExtension()
 
 	-- USER INPUT FUNCTIONS
 	function PreviousEncountersScreen.checkInput(xmouse, ymouse)
-		Input.checkButtonsClicked(xmouse, ymouse, SCREEN.Buttons)
-		Input.checkButtonsClicked(xmouse, ymouse, SCREEN.Pager.Buttons)
+		Input.checkButtonsClicked(xmouse, ymouse, PE_SCREEN.Buttons)
+		Input.checkButtonsClicked(xmouse, ymouse, PE_SCREEN.Pager.Buttons)
 	end
 
 	-- DRAWING FUNCTIONS
@@ -503,13 +503,13 @@ local function EncounterDetailsExtension()
 
 		local canvas = {
 			x = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN,
-			y = Constants.SCREEN.MARGIN + TAB_HEIGHT + OFFSET_FOR_NAME,
+			y = Constants.SCREEN.MARGIN + PE_TAB_HEIGHT + PE_OFFSET_FOR_NAME,
 			width = Constants.SCREEN.RIGHT_GAP - (Constants.SCREEN.MARGIN * 2),
-			height = Constants.SCREEN.HEIGHT - (Constants.SCREEN.MARGIN * 2) - TAB_HEIGHT - OFFSET_FOR_NAME,
-			text = Theme.COLORS[SCREEN.Colors.text],
-			border = Theme.COLORS[SCREEN.Colors.border],
-			fill = Theme.COLORS[SCREEN.Colors.boxFill],
-			shadow = Utils.calcShadowColor(Theme.COLORS[SCREEN.Colors.boxFill])
+			height = Constants.SCREEN.HEIGHT - (Constants.SCREEN.MARGIN * 2) - PE_TAB_HEIGHT - PE_OFFSET_FOR_NAME,
+			text = Theme.COLORS[PE_SCREEN.Colors.text],
+			border = Theme.COLORS[PE_SCREEN.Colors.border],
+			fill = Theme.COLORS[PE_SCREEN.Colors.boxFill],
+			shadow = Utils.calcShadowColor(Theme.COLORS[PE_SCREEN.Colors.boxFill])
 		}
 
 		-- Draw top border box
@@ -517,10 +517,10 @@ local function EncounterDetailsExtension()
 		gui.drawRectangle(canvas.x, canvas.y, canvas.width, canvas.height, canvas.border, canvas.fill)
 
 		-- Draw all buttons
-		for _, button in pairs(SCREEN.Buttons) do
+		for _, button in pairs(PE_SCREEN.Buttons) do
 			Drawing.drawButton(button, canvas.shadow)
 		end
-		for _, button in pairs(SCREEN.Pager.Buttons) do
+		for _, button in pairs(PE_SCREEN.Pager.Buttons) do
 			Drawing.drawButton(button, canvas.shadow)
 		end
 	end
@@ -635,8 +635,8 @@ local function EncounterDetailsExtension()
 				shadowcolor)
 		end,
 		onClick = function()
-			SCREEN.openPokemonSelectWindow(function()
-				if PokemonData.isValid(SCREEN.currentPokemonID) then
+			PE_SCREEN.openPokemonSelectWindow(function()
+				if PokemonData.isValid(PE_SCREEN.currentPokemonID) then
 					Program.changeScreenView(PreviousEncountersScreen)
 				end
 			end)
@@ -810,7 +810,7 @@ local function EncounterDetailsExtension()
 			TrackerAPI.saveExtensionSetting(self.name, "noPiggy", extensionSettings.noPiggy)
 
 			if ignoreWildsOriginal ~= extensionSettings.ignoreWilds then
-				SCREEN.initialize()
+				PE_SCREEN.initialize()
 			end
 			client.unpause()
 			forms.destroy(form)
