@@ -528,6 +528,441 @@ local function EncounterDetailsExtension()
 	--
 	------------------------------------ END Encounter Details Screen ------------------------------------
 	--
+	
+
+	--
+	------------------------------------ Move Search Screen ------------------------------------
+	--
+	local MovesByPokemonScreen = {
+		Colors = {
+			text = "Default text",
+			highlight = "Intermediate text",
+			border = "Upper box border",
+			boxFill = "Upper box background"
+		},
+		Tabs = {
+			All = {
+				index = 1,
+				tabKey = "All",
+				resourceKey = "TabAll"
+			}
+			-- todo hook up so we can list out encounters we've had with mon within range it could exist?
+			-- Wild = {
+			-- 	index = 2,
+			-- 	tabKey = "Wild",
+			-- 	resourceKey = "TabWild"
+			-- },
+			-- Trainer = {
+			-- 	index = 3,
+			-- 	tabKey = "Trainer",
+			-- 	resourceKey = "TabTrainer"
+			-- }
+		},
+		currentView = 1,
+		currentTab = nil,
+		currentMoveID = nil
+	}
+
+	local MV_SCREEN = MovesByPokemonScreen
+	local MV_TAB_HEIGHT = 12
+	local MV_OFFSET_FOR_NAME = 8
+
+	local function movesToList()
+		local moveNames = {}
+		for id, move in ipairs(MoveData.Moves) do
+			if MoveData.isValid(tonumber(move.id)) and move.name ~= Constants.BLANKLINE then
+				table.insert(moveNames, move.name)
+			end
+		end
+		return moveNames
+	end
+
+	local function moveIDFromName(moveName)
+		for id, move in pairs(MoveData.Moves) do
+			if move.name == moveName then
+				return id
+			end
+		end
+
+		return nil
+	end
+
+	local function getPokemonKnownToHaveMove(moveToFind)
+		local monsWithMove = {}
+		for id, pkmn in ipairs(PokemonData.Pokemon) do
+			local knownMoves = Tracker.getMoves(pkmn.pokemonID)
+			for _, move in ipairs(knownMoves) do
+				local moveId = move.id or move.moveId
+				if moveId == moveToFind then
+					table.insert(monsWithMove, {
+						pokemon = pkmn,
+						trackedMove = move
+					})
+				end
+			end
+		end
+
+		return monsWithMove
+	end
+
+
+	MV_SCREEN.Buttons = {
+		NameLabel = {
+			type = Constants.ButtonTypes.NO_BORDER,
+			getText = function(self)
+				return MoveData.Moves[MV_SCREEN.currentMoveID].name
+			end,
+			box = {
+				Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN - 3,
+				Constants.SCREEN.MARGIN - 4,
+				50,
+				10
+			},
+			onClick = function()
+				MV_SCREEN.openMoveSelectWindow()
+			end
+		},
+		CurrentPage = {
+			type = Constants.ButtonTypes.NO_BORDER,
+			getText = function(self)
+				return MV_SCREEN.Pager:getPageText()
+			end,
+			box = {
+				Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 56,
+				Constants.SCREEN.MARGIN + 136,
+				50,
+				10
+			},
+			isVisible = function()
+				return MV_SCREEN.Pager.totalPages > 1
+			end
+		},
+		PrevPage = {
+			type = Constants.ButtonTypes.PIXELIMAGE,
+			image = Constants.PixelImages.LEFT_ARROW,
+			box = {
+				Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 44,
+				Constants.SCREEN.MARGIN + 137,
+				10,
+				10
+			},
+			isVisible = function()
+				return MV_SCREEN.Pager.totalPages > 1
+			end,
+			onClick = function(self)
+				MV_SCREEN.Pager:prevPage()
+			end
+		},
+		NextPage = {
+			type = Constants.ButtonTypes.PIXELIMAGE,
+			image = Constants.PixelImages.RIGHT_ARROW,
+			box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 87, Constants.SCREEN.MARGIN + 137, 10, 10 },
+			isVisible = function()
+				return MV_SCREEN.Pager.totalPages > 1
+			end,
+			onClick = function(self)
+				MV_SCREEN.Pager:nextPage()
+			end
+		},
+		Back = Drawing.createUIElementBackButton(
+			function()
+				Program.changeScreenView(TrackerScreen)
+			end
+		)
+	}
+
+	MV_SCREEN.Pager = {
+		Buttons = {},
+		currentPage = 0,
+		totalPages = 0,
+		defaultSort = function(a, b)
+			return (a.sortValue or 0) > (b.sortValue or 0) or (a.sortValue == b.sortValue and a.id < b.id)
+		end,
+		realignButtonsToGrid = function(self)
+			table.sort(self.Buttons, self.defaultSort)
+			local x = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
+			local y = Constants.SCREEN.MARGIN + MV_TAB_HEIGHT + MV_OFFSET_FOR_NAME + 1
+			local cutoffX = Constants.SCREEN.WIDTH + Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN
+			local cutoffY = Constants.SCREEN.HEIGHT - Constants.SCREEN.MARGIN - 10
+			local totalPages = Utils.gridAlign(self.Buttons, x, y, 2, 2, true, cutoffX, cutoffY)
+			self.currentPage = 1
+			self.totalPages = totalPages or 1
+		end,
+		getPageText = function(self)
+			if self.totalPages <= 1 then
+				return Resources.AllScreens.Page
+			end
+			local buffer = Utils.inlineIf(self.currentPage > 9, "", " ") .. Utils.inlineIf(self.totalPages > 9, "", " ")
+			return buffer .. string.format("%s/%s", self.currentPage, self.totalPages)
+		end,
+		prevPage = function(self)
+			if self.totalPages <= 1 then
+				return
+			end
+			self.currentPage = ((self.currentPage - 2 + self.totalPages) % self.totalPages) + 1
+			Program.redraw(true)
+		end,
+		nextPage = function(self)
+			if self.totalPages <= 1 then
+				return
+			end
+			self.currentPage = (self.currentPage % self.totalPages) + 1
+			Program.redraw(true)
+		end
+	}
+
+	function MovesByPokemonScreen.initialize()
+		MV_SCREEN.currentView = 1
+		MV_SCREEN.currentTab = MV_SCREEN.Tabs.All
+		MV_SCREEN.createButtons()
+
+		for _, button in pairs(MV_SCREEN.Buttons) do
+			if button.textColor == nil then
+				button.textColor = MV_SCREEN.Colors.text
+			end
+			if button.boxColors == nil then
+				button.boxColors = { MV_SCREEN.Colors.border, MV_SCREEN.Colors.boxFill }
+			end
+		end
+
+		MV_SCREEN.refreshButtons()
+	end
+
+	function MovesByPokemonScreen.refreshButtons()
+		for _, button in pairs(MV_SCREEN.Buttons) do
+			if button.updateSelf ~= nil then
+				button:updateSelf()
+			end
+		end
+		for _, button in pairs(MV_SCREEN.Pager.Buttons) do
+			if button.updateSelf ~= nil then
+				button:updateSelf()
+			end
+		end
+	end
+
+	function MovesByPokemonScreen.createButtons()
+		local startX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
+		local startY = Constants.SCREEN.MARGIN + MV_OFFSET_FOR_NAME
+		local tabPadding = 5
+
+		local allTabs = Utils.getSortedList(MV_SCREEN.Tabs)
+		for _, tab in ipairs(allTabs) do
+			MV_SCREEN.Buttons["Tab" .. tab.tabKey] = nil
+		end
+
+		-- local tabsToCreate
+		-- if extensionSettings.ignoreWilds then
+		-- 	tabsToCreate = { MV_SCREEN.Tabs.Trainer }
+		-- else
+		-- 	tabsToCreate = allTabs
+		-- end
+		local tabsToCreate = allTabs
+
+		-- TABS
+		for _, tab in ipairs(tabsToCreate) do
+			local tabText = tab.tabKey
+			local tabWidth = (tabPadding * 2) + Utils.calcWordPixelLength(tabText)
+			MV_SCREEN.Buttons["Tab" .. tab.tabKey] = {
+				type = Constants.ButtonTypes.NO_BORDER,
+				getText = function(self)
+					return tabText
+				end,
+				tab = MV_SCREEN.Tabs[tab.tabKey],
+				isSelected = false,
+				box = { startX, startY, tabWidth, MV_TAB_HEIGHT },
+				updateSelf = function(self)
+					self.isSelected = (self.tab == MV_SCREEN.currentTab)
+					self.textColor = Utils.inlineIf(self.isSelected, MV_SCREEN.Colors.highlight, MV_SCREEN.Colors.text)
+				end,
+				draw = function(self, shadowcolor)
+					local x, y = self.box[1], self.box[2]
+					local w, h = self.box[3], self.box[4]
+					local color = Theme.COLORS[self.boxColors[1]]
+					local bgColor = Theme.COLORS[self.boxColors[2]]
+					gui.drawRectangle(x + 1, y + 1, w - 1, h - 2, bgColor, bgColor) -- Box fill
+					if not self.isSelected then
+						gui.drawRectangle(
+							x + 1,
+							y + 1,
+							w - 1,
+							h - 2,
+							Drawing.ColorEffects.DARKEN,
+							Drawing.ColorEffects.DARKEN
+						)
+					end
+					gui.drawLine(x + 1, y, x + w - 1, y, color) -- Top edge
+					gui.drawLine(x, y + 1, x, y + h - 1, color) -- Left edge
+					gui.drawLine(x + w, y + 1, x + w, y + h - 1, color) -- Right edge
+					if self.isSelected then
+						gui.drawLine(x + 1, y + h, x + w - 1, y + h, bgColor) -- Remove bottom edge
+					end
+					local centeredOffsetX = Utils.getCenteredTextX(self:getText(), w) - 2
+					Drawing.drawText(x + centeredOffsetX, y, self:getText(), Theme.COLORS[self.textColor], shadowcolor)
+				end,
+				onClick = function(self)
+					MV_SCREEN.changeTab(self.tab)
+				end
+			}
+			startX = startX + tabWidth
+		end
+	end
+
+	function MovesByPokemonScreen.buildPagedButtons(tab)
+		tab = tab or MV_SCREEN.currentTab
+		MV_SCREEN.Pager.Buttons = {}
+
+		local monsWithThisMove
+		if MV_SCREEN.currentMoveID ~= nil then
+			monsWithThisMove = getPokemonKnownToHaveMove(MV_SCREEN.currentMoveID)
+			-- shape
+			-- monsWithMove.insert({
+			-- 	pokemon = pkmn,
+			-- 	trackedMove = move
+			-- })
+		end
+
+		local trackerCenterX = Constants.SCREEN.WIDTH + (Constants.SCREEN.RIGHT_GAP / 2)
+		local encounterButtonWidth = 110
+		for _, monWithMove in ipairs(monsWithThisMove) do
+			local minLv = monWithMove.trackedMove.minLv or monWithMove.trackedMove.level
+			local maxLv = monWithMove.trackedMove.maxLv or monWithMove.trackedMove.level
+			local levelRange = "[" .. minLv .. "," .. maxLv .. "]"
+			local monName = monWithMove.pokemon.name
+			local button = {
+				type = Constants.ButtonTypes.NO_BORDER,
+				tab = tab,
+				id = monWithMove.timestamp,
+				sortValue = monWithMove.timestamp,
+				dimensions = {
+					width = encounterButtonWidth,
+					height = 11
+				},
+				textColor = MV_SCREEN.Colors.text,
+				boxColors = {
+					MV_SCREEN.Colors.border,
+					MV_SCREEN.Colors.boxFill
+				},
+				isVisible = function(self)
+					return MV_SCREEN.Pager.currentPage == self.pageVisible
+				end,
+				includeInGrid = function(self)
+					return MV_SCREEN.currentTab == self.tab
+				end,
+				-- onClick = function(self)
+				--  -- TODO if we append more info on tracked data can render state of mon at that time
+				-- 	InfoScreen.changeScreenView(InfoScreen.Screens.ITEM_INFO, self.id) -- implied redraw
+				-- end,
+				draw = function(self, shadowcolor)
+					local x, y = self.box[1], self.box[2]
+					Drawing.drawText(
+						trackerCenterX - (encounterButtonWidth / 2),
+						y,
+						levelRange,
+						Theme.COLORS[self.textColor],
+						shadowcolor
+					)
+					Drawing.drawText(
+						trackerCenterX + (encounterButtonWidth / 2) - Utils.calcWordPixelLength(monName),
+						y,
+						monName,
+						Theme.COLORS[self.textColor],
+						shadowcolor
+					)
+				end
+			}
+			table.insert(MV_SCREEN.Pager.Buttons, button)
+		end
+		MV_SCREEN.Pager:realignButtonsToGrid()
+	end
+
+	local function rebuildMVScreen()
+		MV_SCREEN.buildPagedButtons()
+		MV_SCREEN.refreshButtons()
+		Program.redraw(true)
+	end
+
+	function MovesByPokemonScreen.changeTab(tab)
+		MV_SCREEN.currentTab = tab
+		rebuildMVScreen()
+	end
+
+	function MovesByPokemonScreen.changeMoveID(moveID)
+		MV_SCREEN.currentMoveID = moveID
+		rebuildMVScreen()
+	end
+
+	function MovesByPokemonScreen.openMoveSelectWindow(cb)
+		local form = Utils.createBizhawkForm(Resources.AllScreens.Lookup, 360, 105)
+
+		local moveName
+		if MoveData.isValid(MV_SCREEN.currentMoveID) then -- infoLookup = pokemonID
+			moveName = MoveData.Moves[MV_SCREEN.currentMoveID].name
+		else
+			moveName = ""
+		end
+		local pokedexData = movesToList()
+
+		forms.label(form, "Choose a move to look up:", 49, 10, 250, 20)
+		local moveDexDropdown = forms.dropdown(form, { ["Init"] = "Loading Moves" }, 50, 30, 145, 30)
+		forms.setdropdownitems(moveDexDropdown, pokedexData, true) -- true = alphabetize the list
+		forms.setproperty(moveDexDropdown, "AutoCompleteSource", "ListItems")
+		forms.setproperty(moveDexDropdown, "AutoCompleteMode", "Append")
+		forms.settext(moveDexDropdown, moveName)
+
+		forms.button(form, Resources.AllScreens.Lookup, function()
+			local moveNameFromForm = forms.gettext(moveDexDropdown)
+			local moveId = moveIDFromName(moveNameFromForm)
+
+			if moveId ~= nil and moveId ~= 0 then
+				MV_SCREEN.changeMoveID(moveId)
+				Program.redraw(true)
+			end
+			Utils.closeBizhawkForm(form)
+			if cb ~= nil then
+				cb()
+			end
+		end, 212, 29)
+	end
+
+	-- USER INPUT FUNCTIONS
+	function MovesByPokemonScreen.checkInput(xmouse, ymouse)
+		Input.checkButtonsClicked(xmouse, ymouse, MV_SCREEN.Buttons)
+		Input.checkButtonsClicked(xmouse, ymouse, MV_SCREEN.Pager.Buttons)
+	end
+
+	-- DRAWING FUNCTIONS
+	function MovesByPokemonScreen.drawScreen()
+		Drawing.drawBackgroundAndMargins()
+
+		local canvas = {
+			x = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN,
+			y = Constants.SCREEN.MARGIN + MV_TAB_HEIGHT + MV_OFFSET_FOR_NAME,
+			width = Constants.SCREEN.RIGHT_GAP - (Constants.SCREEN.MARGIN * 2),
+			height = Constants.SCREEN.HEIGHT - (Constants.SCREEN.MARGIN * 2) - MV_TAB_HEIGHT - MV_OFFSET_FOR_NAME,
+			text = Theme.COLORS[MV_SCREEN.Colors.text],
+			border = Theme.COLORS[MV_SCREEN.Colors.border],
+			fill = Theme.COLORS[MV_SCREEN.Colors.boxFill],
+			shadow = Utils.calcShadowColor(Theme.COLORS[MV_SCREEN.Colors.boxFill])
+		}
+
+		-- Draw top border box
+		gui.defaultTextBackground(canvas.fill)
+		gui.drawRectangle(canvas.x, canvas.y, canvas.width, canvas.height, canvas.border, canvas.fill)
+
+		-- Draw all buttons
+		for _, button in pairs(MV_SCREEN.Buttons) do
+			Drawing.drawButton(button, canvas.shadow)
+		end
+		for _, button in pairs(MV_SCREEN.Pager.Buttons) do
+			Drawing.drawButton(button, canvas.shadow)
+		end
+	end
+
+	--
+	------------------------------------ END Move Search Screen ------------------------------------
+	--
+
 	--
 	------------------------------------------- Tracker Buttons ------------------------------------------
 	--
@@ -706,10 +1141,12 @@ local function EncounterDetailsExtension()
 
 		loadData()
 		PreviousEncountersScreen.initialize()
+		MovesByPokemonScreen.initialize()
 
 		TrackerScreen.Buttons.EncounterDetails = trackerPigBtn
 		TrackerScreen.Buttons.InvisibleEncounterDetails = invisibleTextOverlayBtn
 		SingleExtensionScreen.Buttons.EncounterDetails = extensionPagePigBtn
+		SingleExtensionScreen.Buttons.MoveSearchButton = extensionPageMoveSearchButton
 	end
 
 	-- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
@@ -721,6 +1158,7 @@ local function EncounterDetailsExtension()
 		TrackerScreen.Buttons.EncounterDetails = nil
 		TrackerScreen.Buttons.InvisibleEncounterDetails = nil
 		SingleExtensionScreen.Buttons.EncounterDetails = nil
+		SingleExtensionScreen.Buttons.MoveSearchButton = nil
 	end
 
 	-- Executed once every 30 frames or after any redraw event is scheduled (i.e. most button presses)
@@ -740,6 +1178,7 @@ local function EncounterDetailsExtension()
 		if SingleExtensionScreen.Buttons.EncounterDetails ~= nil and SingleExtensionScreen.Buttons.EncounterDetails:isVisible() then
 			local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
 			Drawing.drawButton(SingleExtensionScreen.Buttons.EncounterDetails, shadowcolor)
+			Drawing.drawButton(SingleExtensionScreen.Buttons.MoveSearchButton, shadowcolor)
 		end
 	end
 
@@ -759,7 +1198,7 @@ local function EncounterDetailsExtension()
 				local toTrack = Tracker.getPokemon(slot, false)
 				trackEncounter(toTrack, Battle.isWildEncounter)
 				if Program.currentScreen == PreviousEncountersScreen then
-					rebuild()
+					rebuildPEScreen()
 				end
 			end
 		end
