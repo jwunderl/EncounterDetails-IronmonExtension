@@ -442,7 +442,7 @@ local function EncounterDetailsExtension()
 		PE_SCREEN.Pager:realignButtonsToGrid()
 	end
 
-	local function rebuild()
+	local function rebuildPEScreen()
 		PE_SCREEN.buildPagedButtons()
 		PE_SCREEN.refreshButtons()
 		Program.redraw(true)
@@ -450,12 +450,12 @@ local function EncounterDetailsExtension()
 
 	function PreviousEncountersScreen.changeTab(tab)
 		PE_SCREEN.currentTab = tab
-		rebuild()
+		rebuildPEScreen()
 	end
 
 	function PreviousEncountersScreen.changePokemonID(pokemonID)
 		PE_SCREEN.currentPokemonID = pokemonID
-		rebuild()
+		rebuildPEScreen()
 	end
 
 	function PreviousEncountersScreen.openPokemonSelectWindow(cb)
@@ -638,6 +638,36 @@ local function EncounterDetailsExtension()
 			PE_SCREEN.openPokemonSelectWindow(function()
 				if PokemonData.isValid(PE_SCREEN.currentPokemonID) then
 					Program.changeScreenView(PreviousEncountersScreen)
+				end
+			end)
+		end
+	}
+
+	local extensionMoveSearchBox = {
+		Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 120, -- x
+		Constants.SCREEN.MARGIN + 24,                      -- y
+		13,                                               -- w
+		12                                                -- h
+	}
+	local extensionPageMoveSearchButton = {
+		type = Constants.ButtonTypes.PIXELIMAGE,
+		image = Constants.PixelImages.MAGNIFYING_GLASS,
+		textColor = "Default text",
+		box = extensionMoveSearchBox,
+		isVisible = function()
+			local extensionScreenIsDisplayed = Program.currentScreen == SingleExtensionScreen and
+				SingleExtensionScreen.extensionKey == self.name
+			return extensionScreenIsDisplayed
+		end,
+		-- draw = function()
+		-- 	local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
+		-- 	Drawing.drawImageAsPixels(piggyPixelImage, extensionMoveSearchBox[1], extensionMoveSearchBox[2], pigColors,
+		-- 		shadowcolor)
+		-- end,
+		onClick = function()
+			MV_SCREEN.openMoveSelectWindow(function()
+				if PokemonData.isValid(MV_SCREEN.currentMoveID) then
+					Program.changeScreenView(MovesByPokemonScreen)
 				end
 			end)
 		end
