@@ -528,7 +528,7 @@ local function EncounterDetailsExtension()
 	--
 	------------------------------------ END Encounter Details Screen ------------------------------------
 	--
-	
+
 
 	--
 	------------------------------------ Move Search Screen ------------------------------------
@@ -815,19 +815,14 @@ local function EncounterDetailsExtension()
 		local monsWithThisMove
 		if MV_SCREEN.currentMoveID ~= nil then
 			monsWithThisMove = getPokemonKnownToHaveMove(MV_SCREEN.currentMoveID)
-			-- shape
-			-- monsWithMove.insert({
-			-- 	pokemon = pkmn,
-			-- 	trackedMove = move
-			-- })
 		end
 
 		local trackerCenterX = Constants.SCREEN.WIDTH + (Constants.SCREEN.RIGHT_GAP / 2)
-		local encounterButtonWidth = 110
+		local encounterButtonWidth = 100
 		for _, monWithMove in ipairs(monsWithThisMove) do
 			local minLv = monWithMove.trackedMove.minLv or monWithMove.trackedMove.level
 			local maxLv = monWithMove.trackedMove.maxLv or monWithMove.trackedMove.level
-			local levelRange = "[" .. minLv .. "," .. maxLv .. "]"
+			local levelRange = "min:" .. minLv .. ", max:" .. maxLv
 			local monName = monWithMove.pokemon.name
 			local button = {
 				type = Constants.ButtonTypes.NO_BORDER,
