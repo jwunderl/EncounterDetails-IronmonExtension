@@ -845,7 +845,7 @@ local function EncounterDetailsExtension()
 					return MV_SCREEN.currentTab == self.tab
 				end,
 				-- onClick = function(self)
-				--  -- TODO if we append more info on tracked data can render state of mon at that time
+				--  -- TODO could open up mon info screen?
 				-- 	InfoScreen.changeScreenView(InfoScreen.Screens.ITEM_INFO, self.id) -- implied redraw
 				-- end,
 				draw = function(self, shadowcolor)
@@ -1089,11 +1089,6 @@ local function EncounterDetailsExtension()
 				SingleExtensionScreen.extensionKey == self.name
 			return extensionScreenIsDisplayed
 		end,
-		-- draw = function()
-		-- 	local shadowcolor = Utils.calcShadowColor(Theme.COLORS["Upper box background"])
-		-- 	Drawing.drawImageAsPixels(piggyPixelImage, extensionMoveSearchBox[1], extensionMoveSearchBox[2], pigColors,
-		-- 		shadowcolor)
-		-- end,
 		onClick = function()
 			MV_SCREEN.openMoveSelectWindow(function()
 				if PokemonData.isValid(MV_SCREEN.currentMoveID) then
