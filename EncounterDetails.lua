@@ -78,6 +78,9 @@ local function EncounterDetailsExtension()
 			"pokemonid INTEGER,",
 			"timestamp INTEGER,",
 			"level INTEGER,",
+			"playerlevel INTEGER,",
+			"trainerid INTEGER,",
+			"routeid INTEGER,",
 			"iswild INTEGER", -- BOOLEAN: 1 true, 0 false
 			");"
 		})
@@ -113,10 +116,13 @@ local function EncounterDetailsExtension()
 		local trackEncounterCommand = listToSqlCmd({
 			"INSERT INTO",
 			self.encounterTableKey,
-			"(pokemonid, timestamp, level, iswild) VALUES (",
+			"(pokemonid, timestamp, level, playerlevel, routeid, trainerid, iswild) VALUES (",
 			pokemon.pokemonID, ",",
 			os.time(), ",",
 			pokemon.level, ",",
+			Tracker.getPokemon(1, true).level, ",",
+			Program.GameData.mapId, ",",
+			Battle.opposingTrainerId, ",",
 			Utils.inlineIf(isWild, "1", "0"),
 			")"
 		})
@@ -153,7 +159,8 @@ local function EncounterDetailsExtension()
 		},
 		currentView = 1,
 		currentTab = nil,
-		currentPokemonID = nil
+		currentPokemonID = nil,
+		examiningEncounter = nil,
 	}
 
 	local PE_SCREEN = PreviousEncountersScreen
@@ -231,9 +238,90 @@ local function EncounterDetailsExtension()
 				PE_SCREEN.Pager:nextPage()
 			end
 		},
+		ExamineModal = {
+			type = Constants.ButtonTypes.FULL_BORDER,
+			getText = function(self)
+				local timestamp = PE_SCREEN.examiningEncounter["timestamp"]
+				return os.date("%b %d,  %I:%M:%S %p", timestamp)
+			end,
+			box = {
+				Constants.SCREEN.WIDTH + 10,
+				Constants.SCREEN.MARGIN + PE_TAB_HEIGHT + PE_OFFSET_FOR_NAME + 5,
+				Constants.SCREEN.RIGHT_GAP - 20,
+				Constants.SCREEN.HEIGHT - PE_TAB_HEIGHT - PE_OFFSET_FOR_NAME - 30
+			},
+			draw = function(self, shadowcolor)
+				local Y_OFFSET = 10
+				local x, y = self.box[1] + 1, self.box[2] + Y_OFFSET
+				local w, h = self.box[3], self.box[4]
+				local color = Theme.COLORS[self.boxColors[1]]
+				local bgColor = Theme.COLORS[self.boxColors[2]]
+				local encounter = PE_SCREEN.examiningEncounter
+				if encounter == nil then
+					return
+				end
+				-- draw level seen
+				Drawing.drawText(
+					x,
+					y,
+					"seen at lvl " .. encounter.level,
+					Theme.COLORS[self.textColor],
+					shadowcolor
+				)
+				y = y + Y_OFFSET
+				Drawing.drawText(
+					x,
+					y,
+					"while at lvl " .. encounter.playerlevel,
+					Theme.COLORS[self.textColor],
+					shadowcolor
+				)
+				y = y + Y_OFFSET
+				Drawing.drawText(
+					x,
+					y,
+					"while in ",
+					Theme.COLORS[self.textColor],
+					shadowcolor
+				)
+				y = y + Y_OFFSET
+				Drawing.drawText(
+					x,
+					y,
+					"  " .. RouteData.Info[encounter.routeid].name,
+					Theme.COLORS[self.textColor],
+					shadowcolor
+				)
+				if encounter.iswild == 0 then
+					y = y + Y_OFFSET
+					Drawing.drawText(
+						x,
+						y,
+						"fighting trainer:",
+						Theme.COLORS[self.textColor],
+						shadowcolor
+					)
+					y = y + Y_OFFSET
+					Drawing.drawText(
+						x,
+						y,
+						"  " .. TrainerData.getTrainerInfo(encounter.trainerid).class.filename,
+						Theme.COLORS[self.textColor],
+						shadowcolor
+					)
+				end
+			end,
+			isVisible = function()
+				return PE_SCREEN.examiningEncounter ~= nil
+			end
+		},
 		Back = Drawing.createUIElementBackButton(
 			function()
-				Program.changeScreenView(TrackerScreen)
+				if PE_SCREEN.examiningEncounter then
+					PE_SCREEN.examiningEncounter = nil
+				else
+					Program.changeScreenView(TrackerScreen)
+				end
 			end
 		)
 	}
@@ -266,6 +354,7 @@ local function EncounterDetailsExtension()
 			if self.totalPages <= 1 then
 				return
 			end
+			PE_SCREEN.examiningEncounter = nil
 			self.currentPage = ((self.currentPage - 2 + self.totalPages) % self.totalPages) + 1
 			Program.redraw(true)
 		end,
@@ -273,6 +362,7 @@ local function EncounterDetailsExtension()
 			if self.totalPages <= 1 then
 				return
 			end
+			PE_SCREEN.examiningEncounter = nil
 			self.currentPage = (self.currentPage % self.totalPages) + 1
 			Program.redraw(true)
 		end
@@ -410,15 +500,14 @@ local function EncounterDetailsExtension()
 					PE_SCREEN.Colors.boxFill
 				},
 				isVisible = function(self)
-					return PE_SCREEN.Pager.currentPage == self.pageVisible
+					return PE_SCREEN.Pager.currentPage == self.pageVisible and PE_SCREEN.examiningEncounter == nil
 				end,
 				includeInGrid = function(self)
 					return PE_SCREEN.currentTab == self.tab
 				end,
-				-- onClick = function(self)
-				--  -- TODO if we append more info on tracked data can render state of mon at that time
-				-- 	InfoScreen.changeScreenView(InfoScreen.Screens.ITEM_INFO, self.id) -- implied redraw
-				-- end,
+				onClick = function(self)
+					PE_SCREEN.examiningEncounter = encounter; -- implied redraw
+				end,
 				draw = function(self, shadowcolor)
 					local x, y = self.box[1], self.box[2]
 					Drawing.drawText(
@@ -450,11 +539,13 @@ local function EncounterDetailsExtension()
 
 	function PreviousEncountersScreen.changeTab(tab)
 		PE_SCREEN.currentTab = tab
+		PE_SCREEN.examiningEncounter = nil
 		rebuildPEScreen()
 	end
 
 	function PreviousEncountersScreen.changePokemonID(pokemonID)
 		PE_SCREEN.currentPokemonID = pokemonID
+		PE_SCREEN.examiningEncounter = nil
 		rebuildPEScreen()
 	end
 
@@ -1075,7 +1166,7 @@ local function EncounterDetailsExtension()
 
 	local extensionMoveSearchBox = {
 		Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 120, -- x
-		Constants.SCREEN.MARGIN + 24,                      -- y
+		Constants.SCREEN.MARGIN + 24,                     -- y
 		13,                                               -- w
 		12                                                -- h
 	}
