@@ -280,7 +280,7 @@ local function EncounterDetailsExtension()
 				Drawing.drawText(
 					x,
 					y,
-					"while in ",
+					"while in:",
 					Theme.COLORS[self.textColor],
 					shadowcolor
 				)
