@@ -79,6 +79,7 @@ local function EncounterDetailsExtension()
 			"timestamp INTEGER,",
 			"level INTEGER,",
 			"playerlevel INTEGER,",
+			"playerid INTEGER,",
 			"trainerid INTEGER,",
 			"routeid INTEGER,",
 			"iswild INTEGER", -- BOOLEAN: 1 true, 0 false
@@ -113,14 +114,16 @@ local function EncounterDetailsExtension()
 	end
 
 	local function trackEncounter(pokemon, isWild)
+		local playerMon = Tracker.getPokemon(1, true);
 		local trackEncounterCommand = listToSqlCmd({
 			"INSERT INTO",
 			self.encounterTableKey,
-			"(pokemonid, timestamp, level, playerlevel, routeid, trainerid, iswild) VALUES (",
+			"(pokemonid, timestamp, level, playerlevel, playerid, routeid, trainerid, iswild) VALUES (",
 			pokemon.pokemonID, ",",
 			os.time(), ",",
 			pokemon.level, ",",
-			Tracker.getPokemon(1, true).level, ",",
+			playerMon.level, ",",
+			playerMon.pokemonID, ",",
 			Program.GameData.mapId, ",",
 			Battle.opposingTrainerId, ",",
 			Utils.inlineIf(isWild, "1", "0"),
@@ -310,6 +313,15 @@ local function EncounterDetailsExtension()
 						shadowcolor
 					)
 				end
+
+				y = y + Y_OFFSET
+				Drawing.drawText(
+					x,
+					y,
+					"as " .. PokemonData.Pokemon[encounter.playerid].name,
+					Theme.COLORS[self.textColor],
+					shadowcolor
+				)
 			end,
 			isVisible = function()
 				return PE_SCREEN.examiningEncounter ~= nil
