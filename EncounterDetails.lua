@@ -1,7 +1,7 @@
 local function EncounterDetailsExtension()
 	-- Define descriptive attributes of the custom extension that are displayed on the Tracker settings
 	local self = {}
-	self.version = "1.0"
+	self.version = "1.1"
 	self.name = "EncounterDetails"
 	self.author = "jwunderl"
 	self.description = "Track extra details on every encounter you've faced."
@@ -82,7 +82,8 @@ local function EncounterDetailsExtension()
 			"playerid INTEGER,",
 			"trainerid INTEGER,",
 			"routeid INTEGER,",
-			"iswild INTEGER", -- BOOLEAN: 1 true, 0 false
+			"iswild INTEGER,", -- BOOLEAN: 1 true, 0 false
+			"movesused TEXT", -- Comma-separated list of move IDs
 			");"
 		})
 
@@ -113,12 +114,16 @@ local function EncounterDetailsExtension()
 		return reformatSqlReadResult(res);
 	end
 
-	local function trackEncounter(pokemon, isWild)
+	local function trackEncounter(pokemon, isWild, movesUsed)
 		local playerMon = Tracker.getPokemon(1, true);
+		local movesUsedStr = ""
+		if movesUsed and #movesUsed > 0 then
+			movesUsedStr = table.concat(movesUsed, ",")
+		end
 		local trackEncounterCommand = listToSqlCmd({
 			"INSERT INTO",
 			self.encounterTableKey,
-			"(pokemonid, timestamp, level, playerlevel, playerid, routeid, trainerid, iswild) VALUES (",
+			"(pokemonid, timestamp, level, playerlevel, playerid, routeid, trainerid, iswild, movesused) VALUES (",
 			pokemon.pokemonID, ",",
 			os.time(), ",",
 			pokemon.level, ",",
@@ -126,7 +131,8 @@ local function EncounterDetailsExtension()
 			playerMon.pokemonID, ",",
 			Program.GameData.mapId, ",",
 			Battle.opposingTrainerId, ",",
-			Utils.inlineIf(isWild, "1", "0"),
+			Utils.inlineIf(isWild, "1", "0"), ",",
+			"'" .. movesUsedStr .. "'",
 			")"
 		})
 		SQL.opendatabase(self.dbKey)
@@ -322,6 +328,38 @@ local function EncounterDetailsExtension()
 					Theme.COLORS[self.textColor],
 					shadowcolor
 				)
+
+				-- Display moves used if available
+				if encounter.movesused and encounter.movesused ~= "" then
+					y = y + Y_OFFSET
+					y = y + Y_OFFSET
+					Drawing.drawText(
+						x,
+						y,
+						"Moves used:",
+						Theme.COLORS[self.textColor],
+						shadowcolor
+					)
+					-- Parse comma-separated move IDs
+					local moveIds = {}
+					for moveId in string.gmatch(encounter.movesused, "([^,]+)") do
+						table.insert(moveIds, tonumber(moveId))
+					end
+					-- Display each move
+					for _, moveId in ipairs(moveIds) do
+						if MoveData.isValid(moveId) then
+							y = y + Y_OFFSET
+							local moveName = MoveData.Moves[moveId].name
+							Drawing.drawText(
+								x,
+								y,
+								"  " .. moveName,
+								Theme.COLORS[self.textColor],
+								shadowcolor
+							)
+						end
+					end
+				end
 			end,
 			isVisible = function()
 				return PE_SCREEN.examiningEncounter ~= nil
@@ -1276,11 +1314,34 @@ local function EncounterDetailsExtension()
 	end
 
 	local enemyPokemonMarkedEncountered = nil
+	local enemyMovesUsedInEncounter = {}
 
 	-- Executed once every 30 frames, after any battle related data from game memory is read in
 	function self.afterBattleDataUpdate()
 		if enemyPokemonMarkedEncountered == nil then
 			return
+		end
+
+		-- Track moves used by enemy Pokemon during the encounter
+		if Battle.lastEnemyMoveId and Battle.lastEnemyMoveId ~= 0 then
+			local slot = Battle.Combatants.LeftOther
+			if Battle.numBattlers == 4 and Battle.attacker == 3 then
+				slot = Battle.Combatants.RightOther
+			end
+			if not enemyMovesUsedInEncounter[slot] then
+				enemyMovesUsedInEncounter[slot] = {}
+			end
+			-- Only add move if it's not already in the list for this slot
+			local alreadyTracked = false
+			for _, moveId in ipairs(enemyMovesUsedInEncounter[slot]) do
+				if moveId == Battle.lastEnemyMoveId then
+					alreadyTracked = true
+					break
+				end
+			end
+			if not alreadyTracked then
+				table.insert(enemyMovesUsedInEncounter[slot], Battle.lastEnemyMoveId)
+			end
 		end
 
 		local enemyTeam = Battle.BattleParties[1]
@@ -1289,7 +1350,8 @@ local function EncounterDetailsExtension()
 			if mon.seenAlready and not enemyPokemonMarkedEncountered[slot] then
 				enemyPokemonMarkedEncountered[slot] = true
 				local toTrack = Tracker.getPokemon(slot, false)
-				trackEncounter(toTrack, Battle.isWildEncounter)
+				local movesUsed = enemyMovesUsedInEncounter[slot] or {}
+				trackEncounter(toTrack, Battle.isWildEncounter, movesUsed)
 				if Program.currentScreen == PreviousEncountersScreen then
 					rebuildPEScreen()
 				end
@@ -1307,6 +1369,7 @@ local function EncounterDetailsExtension()
 		end
 
 		enemyPokemonMarkedEncountered = {}
+		enemyMovesUsedInEncounter = {}
 	end
 
 	-- Executed after a battle ends, and only once per battle
@@ -1316,6 +1379,7 @@ local function EncounterDetailsExtension()
 		end
 
 		enemyPokemonMarkedEncountered = nil
+		enemyMovesUsedInEncounter = {}
 	end
 
 	-- -- Executed once every 30 frames, after most data from game memory is read in
