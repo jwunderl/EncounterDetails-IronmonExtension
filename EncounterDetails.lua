@@ -55,8 +55,9 @@ local function EncounterDetailsExtension()
 	local BATTLEMON_STATUS2_OFFSET = 0x50
 	local BATTLERS_BY_TURN_ORDER_OFFSET = 4
 	local CRIT_MESSAGE_OPCODE = 0x0D
-	-- gCritMultiplier is three bytes before gBattlescriptCurrInstr in each supported game.
-	local CRIT_MULTIPLIER_OFFSET = -3
+	local WAIT_MESSAGE_OPCODE = 0x12
+	local BATTLE_COMM_MESSAGE_DISPLAY_OFFSET = 7
+	local HITMARKER_ATTACKSTRING_PRINTED = 0x400
 	local currentBattle = nil
 
 	local function dumpTable(o)
@@ -242,43 +243,54 @@ local function EncounterDetailsExtension()
 
 		SQL.opendatabase(self.dbKey)
 		local res = SQL.readcommand(listToSqlCmd({
-			"SELECT battleid FROM",
+			"SELECT encounterbattle.battleid FROM",
 			self.encounterBattleTableKey,
-			"WHERE pokemonid =",
+			"encounterbattle INNER JOIN",
+			self.battleTableKey,
+			"battle ON battle.battleid = encounterbattle.battleid",
+			"WHERE encounterbattle.pokemonid =",
 			encounter.pokemonid,
-			"AND encountertimestamp =",
+			"AND encounterbattle.encountertimestamp =",
 			encounter.timestamp,
-			"ORDER BY battleid DESC LIMIT 1"
+			"ORDER BY encounterbattle.battleid DESC LIMIT 1"
 		}))
 		local rows = reformatSqlReadResult(res)
 		return rows[1] and tonumber(rows[1].battleid) or nil
 	end
 
 	local function createBattleRecord()
+		local battleTimestamp = os.time()
 		SQL.opendatabase(self.dbKey)
 		SQL.writecommand(listToSqlCmd({
 			"INSERT INTO",
 			self.battleTableKey,
 			"(timestamp, routeid, trainerid, iswild) VALUES (",
-			os.time(), ",",
+			battleTimestamp, ",",
 			Program.GameData.mapId, ",",
 			Battle.opposingTrainerId, ",",
 			Utils.inlineIf(Battle.isWildEncounter, "1", "0"),
 			")"
 		}))
 
-		local rows = reformatSqlReadResult(SQL.readcommand("SELECT last_insert_rowid() AS battleid"))
+		local rows = reformatSqlReadResult(SQL.readcommand(listToSqlCmd({
+			"SELECT battleid FROM",
+			self.battleTableKey,
+			"WHERE timestamp =",
+			battleTimestamp,
+			"ORDER BY battleid DESC LIMIT 1"
+		})))
 		return rows[1] and tonumber(rows[1].battleid) or nil
 	end
 
 	local function getActivePokemonID(battlerIndex)
-		local combatantKey = Battle.IndexMap[battlerIndex]
-		local slot = combatantKey and Battle.Combatants[combatantKey]
-		if slot == nil then
+		local baseAddress = GameSettings.gBattleMons or 0
+		if baseAddress == 0 or battlerIndex < 0 or battlerIndex >= Battle.numBattlers then
 			return 0
 		end
-		local pokemon = Tracker.getPokemon(slot, battlerIndex % 2 == 0) or {}
-		return PokemonData.isValid(pokemon.pokemonID) and pokemon.pokemonID or 0
+
+		local monAddress = baseAddress + battlerIndex * Program.Addresses.sizeofBattlePokemon
+		local pokemonID = Memory.readword(monAddress)
+		return PokemonData.isValid(pokemonID) and pokemonID or 0
 	end
 
 	local function getHPBarPixels(battlerIndex)
@@ -440,10 +452,8 @@ local function EncounterDetailsExtension()
 		currentBattle = {
 			id = battleID,
 			actionKey = nil,
-			observedTurn = nil,
-			actionsConfirmed = false,
 			pendingAction = nil,
-			atCritMessage = false,
+			waitingForCritMessage = false,
 			latestState = nil,
 			nextSequence = 1,
 			initialAction = {
@@ -467,16 +477,7 @@ local function EncounterDetailsExtension()
 			return nil
 		end
 
-		if current.observedTurn ~= Battle.turnCount then
-			current.observedTurn = Battle.turnCount
-			current.actionsConfirmed = false
-		end
-		if not current.actionsConfirmed then
-			local confirmedCount = Memory.readbyte(GameSettings.gBattleCommunication
-				+ Program.Addresses.offsetBattleCommConfirmedCount)
-			if confirmedCount >= Battle.numBattlers then
-				current.actionsConfirmed = true
-			end
+		if Memory.readdword(GameSettings.gBattleMainFunc) == GameSettings.HandleTurnActionSelectionState then
 			return nil
 		end
 
@@ -493,16 +494,9 @@ local function EncounterDetailsExtension()
 		if actorIndex < 0 or actorIndex >= Battle.numBattlers then
 			return nil
 		end
-		local moveID = 0
-		if actionType == 0 then
-			local sideOffset = (actorIndex % 2) * Program.Addresses.sizeofLastAttackerMove
-			moveID = Memory.readword(GameSettings.gBattleResults
-				+ Program.Addresses.offsetBattleResultsLastAttackerMove + sideOffset)
-			if not MoveData.isValid(moveID) then
-				moveID = 0
-			end
+		if actionType == 0 and getHPBarPixels(actorIndex) == 0 then
+			return nil
 		end
-
 		local turn = Battle.turnCount + 1
 		return {
 			key = string.format("%s:%s", turn, actionIndex),
@@ -511,7 +505,7 @@ local function EncounterDetailsExtension()
 			actorindex = actorIndex,
 			actorpokemonid = getActivePokemonID(actorIndex),
 			actiontype = actionType,
-			moveid = moveID,
+			moveid = 0,
 			iscritical = 0,
 		}
 	end
@@ -524,21 +518,41 @@ local function EncounterDetailsExtension()
 		end
 
 		if current.actionKey == action.key then
-			if current.pendingAction ~= nil and action.moveid ~= 0
-				and current.pendingAction.moveid ~= action.moveid then
-				current.pendingAction.moveid = action.moveid
-				saveTimelineEvent(current.pendingAction, current.latestState)
-			end
 			return
 		end
 
 		updateBattleState()
 		current.actionKey = action.key
-		current.atCritMessage = false
+		current.waitingForCritMessage = false
 		action.sequence = current.nextSequence
 		current.nextSequence = current.nextSequence + 1
 		current.pendingAction = action
 		saveTimelineEvent(action, current.latestState)
+	end
+
+	local function updateVisibleMove()
+		local current = currentBattle
+		if current == nil or current.pendingAction == nil then
+			return
+		end
+		local action = current.pendingAction
+		if action.actiontype ~= 0 or action.moveid ~= 0
+			or Memory.readbyte(GameSettings.gCurrentTurnActionNumber) ~= action.actionindex then
+			return
+		end
+
+		local hitMarker = Memory.readdword(GameSettings.gHitMarker)
+		if Utils.bit_and(hitMarker, HITMARKER_ATTACKSTRING_PRINTED) == 0 then
+			return
+		end
+
+		local sideOffset = (action.actorindex % 2) * Program.Addresses.sizeofLastAttackerMove
+		local moveID = Memory.readword(GameSettings.gBattleResults
+			+ Program.Addresses.offsetBattleResultsLastAttackerMove + sideOffset)
+		if MoveData.isValid(moveID) then
+			action.moveid = moveID
+			saveTimelineEvent(action, current.latestState)
+		end
 	end
 
 	local function updateCriticalHit()
@@ -558,19 +572,24 @@ local function EncounterDetailsExtension()
 		end
 
 		local scriptAddress = Memory.readdword(scriptPointerAddress)
-		local atCritMessage = scriptAddress >= 0x08000000 and scriptAddress < 0x0A000000
-			and Memory.readbyte(scriptAddress) == CRIT_MESSAGE_OPCODE
-		if not atCritMessage then
-			current.atCritMessage = false
+		if scriptAddress < 0x08000000 or scriptAddress >= 0x0A000000 then
+			current.waitingForCritMessage = false
 			return
 		end
-		if current.atCritMessage then
-			return
-		end
-		current.atCritMessage = true
 
-		local critAddress = scriptPointerAddress + CRIT_MULTIPLIER_OFFSET
-		if Memory.readbyte(critAddress) == 2 then
+		local opcode = Memory.readbyte(scriptAddress)
+		if opcode == CRIT_MESSAGE_OPCODE then
+			current.waitingForCritMessage = true
+			return
+		end
+		if not current.waitingForCritMessage then
+			return
+		end
+		current.waitingForCritMessage = false
+
+		local messageDisplayed = Memory.readbyte(GameSettings.gBattleCommunication
+			+ BATTLE_COMM_MESSAGE_DISPLAY_OFFSET)
+		if opcode == WAIT_MESSAGE_OPCODE and messageDisplayed == 1 then
 			action.iscritical = 1
 			saveTimelineEvent(action, current.latestState)
 		end
@@ -1381,8 +1400,11 @@ local function EncounterDetailsExtension()
 					canvas.text, canvas.shadow)
 				y = y + Constants.SCREEN.LINESPACING
 				local actionText = ACTION_TYPES[entry.actiontype] or "Action"
-				if entry.actiontype == 0 and MoveData.isValid(entry.moveid) then
-					actionText = MoveData.Moves[entry.moveid].name
+				if entry.actiontype == 0 then
+					actionText = "Nothing happened"
+					if MoveData.isValid(entry.moveid) then
+						actionText = MoveData.Moves[entry.moveid].name
+					end
 				end
 				Drawing.drawText(canvas.x + 4, y, fitTimelineText("Action: " .. actionText, canvas.width - 8),
 					Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
@@ -2161,6 +2183,7 @@ local function EncounterDetailsExtension()
 		end
 
 		updateBattleAction()
+		updateVisibleMove()
 		updateCriticalHit()
 		updateBattleState()
 	end
