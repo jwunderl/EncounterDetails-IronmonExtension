@@ -20,12 +20,40 @@ local function EncounterDetailsExtension()
 		noPiggy = false,
 		ignoreWilds = false,
 		storeBattleLogs = true,
+		showHPPixels = true,
 	}
 	local ACTION_TYPES = {
 		[0] = "Move",
 		[1] = "Item",
 		[2] = "Switch",
 		[3] = "Run",
+	}
+	local BATTLE_STATE_PREFIXES = { "ownleft", "otherleft", "ownright", "otherright" }
+	local STAT_STAGE_KEYS = { "atk", "def", "spa", "spd", "spe", "acc", "eva" }
+	local STAT_STAGE_NAMES = {
+		atk = "ATK",
+		def = "DEF",
+		spa = "SPA",
+		spd = "SPD",
+		spe = "SPE",
+		acc = "ACC",
+		eva = "EVA",
+	}
+	local STAT_STAGE_UNKNOWN = 99
+	local WEATHER = {
+		UNKNOWN = -1,
+		NONE = 0,
+		RAIN = 1,
+		SANDSTORM = 2,
+		SUNLIGHT = 3,
+		HAIL = 4,
+	}
+	local WEATHER_NAMES = {
+		[WEATHER.NONE] = "clear",
+		[WEATHER.RAIN] = "Rain",
+		[WEATHER.SANDSTORM] = "Sandstorm",
+		[WEATHER.SUNLIGHT] = "Sunlight",
+		[WEATHER.HAIL] = "Hail",
 	}
 	local MAJOR_STATUS = {
 		UNKNOWN = -1,
@@ -161,37 +189,34 @@ local function EncounterDetailsExtension()
 			"( pokemonid, encountertimestamp )"
 		})
 		-- HP is stored as -1 unknown or the number of filled pixels in the 48px bar.
-		-- Confusion is stored as -1 unknown, 0 clear, or 1 confused.
+		-- Stages are stored as signed -6..6 values, never the raw in-memory 0..12 values.
+		-- Weather and confusion are normalized display values, not raw engine flags.
+		local timelineColumns = {
+			"battleid INTEGER",
+			"sequence INTEGER",
+			"turn INTEGER",
+			"actionindex INTEGER",
+			"actorindex INTEGER",
+			"actorpokemonid INTEGER",
+			"actiontype INTEGER",
+			"moveid INTEGER",
+			"iscritical INTEGER",
+			"weather INTEGER",
+		}
+		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
+			for _, field in ipairs({ "id", "hp", "status", "confused" }) do
+				table.insert(timelineColumns, prefix .. field .. " INTEGER")
+			end
+			for _, stageKey in ipairs(STAT_STAGE_KEYS) do
+				table.insert(timelineColumns, prefix .. stageKey .. "stage INTEGER")
+			end
+		end
+		table.insert(timelineColumns, "PRIMARY KEY ( battleid, sequence )")
 		local timelineTableCreateCommand = listToSqlCmd({
 			"CREATE TABLE IF NOT EXISTS",
 			self.timelineTableKey,
 			"(",
-			"battleid INTEGER,",
-			"sequence INTEGER,",
-			"turn INTEGER,",
-			"actionindex INTEGER,",
-			"actorindex INTEGER,",
-			"actorpokemonid INTEGER,",
-			"actiontype INTEGER,",
-			"moveid INTEGER,",
-			"iscritical INTEGER,",
-			"ownleftid INTEGER,",
-			"ownlefthp INTEGER,",
-			"ownleftstatus INTEGER,",
-			"ownleftconfused INTEGER,",
-			"otherleftid INTEGER,",
-			"otherlefthp INTEGER,",
-			"otherleftstatus INTEGER,",
-			"otherleftconfused INTEGER,",
-			"ownrightid INTEGER,",
-			"ownrighthp INTEGER,",
-			"ownrightstatus INTEGER,",
-			"ownrightconfused INTEGER,",
-			"otherrightid INTEGER,",
-			"otherrighthp INTEGER,",
-			"otherrightstatus INTEGER,",
-			"otherrightconfused INTEGER,",
-			"PRIMARY KEY ( battleid, sequence )",
+			table.concat(timelineColumns, ", "),
 			");"
 		})
 
@@ -347,8 +372,75 @@ local function EncounterDetailsExtension()
 		return Utils.inlineIf(Memory.readdword(monAddress + BATTLEMON_STATUS2_OFFSET) % 8 > 0, 1, 0)
 	end
 
+	local function getDefaultStatStages(value)
+		local stages = {}
+		for _, stageKey in ipairs(STAT_STAGE_KEYS) do
+			stages[stageKey] = value
+		end
+		return stages
+	end
+
+	local function readStatStages(battlerIndex)
+		local baseAddress = GameSettings.gBattleMons or 0
+		if baseAddress == 0 or battlerIndex < 0 or battlerIndex >= Battle.numBattlers then
+			return getDefaultStatStages(STAT_STAGE_UNKNOWN)
+		end
+
+		local monAddress = baseAddress + battlerIndex * Program.Addresses.sizeofBattlePokemon
+		if not PokemonData.isValid(Memory.readword(monAddress)) then
+			return getDefaultStatStages(STAT_STAGE_UNKNOWN)
+		end
+
+		local stageOffset = Program.Addresses.offsetBattlePokemonStatStages
+		local hpAtkDefSpe = Memory.readdword(monAddress + stageOffset)
+		local spaSpdAccEva = Memory.readdword(monAddress + stageOffset + 4)
+		if Utils.getbits(hpAtkDefSpe, 0, 8) == 0 then
+			return getDefaultStatStages(0)
+		end
+
+		local rawStages = {
+			atk = Utils.getbits(hpAtkDefSpe, 8, 8),
+			def = Utils.getbits(hpAtkDefSpe, 16, 8),
+			spe = Utils.getbits(hpAtkDefSpe, 24, 8),
+			spa = Utils.getbits(spaSpdAccEva, 0, 8),
+			spd = Utils.getbits(spaSpdAccEva, 8, 8),
+			acc = Utils.getbits(spaSpdAccEva, 16, 8),
+			eva = Utils.getbits(spaSpdAccEva, 24, 8),
+		}
+		local stages = getDefaultStatStages(STAT_STAGE_UNKNOWN)
+		for stageKey, rawStage in pairs(rawStages) do
+			if rawStage >= 0 and rawStage <= 12 then
+				stages[stageKey] = rawStage - 6
+			end
+		end
+		return stages
+	end
+
+	local function readWeather()
+		local weatherAddress = GameSettings.gBattleWeather or 0
+		if weatherAddress == 0 then
+			return WEATHER.UNKNOWN
+		end
+
+		local weatherByte = Memory.readbyte(weatherAddress)
+		if weatherByte == 0 then
+			return WEATHER.NONE
+		end
+		local weatherBitIndex = 0
+		while weatherByte > 1 do
+			weatherByte = Utils.bit_rshift(weatherByte, 1)
+			weatherBitIndex = weatherBitIndex + 1
+		end
+		if weatherBitIndex <= 2 then return WEATHER.RAIN end
+		if weatherBitIndex <= 4 then return WEATHER.SANDSTORM end
+		if weatherBitIndex <= 6 then return WEATHER.SUNLIGHT end
+		if weatherBitIndex == 7 then return WEATHER.HAIL end
+		return WEATHER.UNKNOWN
+	end
+
 	local function getBattleState()
-		return {
+		local state = {
+			weather = readWeather(),
 			ownleftid = getActivePokemonID(0),
 			ownlefthp = getHPBarPixels(0),
 			ownleftstatus = readMajorStatus(0),
@@ -366,13 +458,23 @@ local function EncounterDetailsExtension()
 			otherrightstatus = Utils.inlineIf(Battle.numBattlers == 4, readMajorStatus(3), MAJOR_STATUS.UNKNOWN),
 			otherrightconfused = Utils.inlineIf(Battle.numBattlers == 4, readConfused(3), CONFUSION_UNKNOWN),
 		}
+		for battlerIndex, prefix in ipairs(BATTLE_STATE_PREFIXES) do
+			local stages = readStatStages(battlerIndex - 1)
+			for _, stageKey in ipairs(STAT_STAGE_KEYS) do
+				state[prefix .. stageKey .. "stage"] = stages[stageKey]
+			end
+		end
+		return state
 	end
 
 	local function mergeUnknownState(state, previousState)
 		if previousState == nil then
 			return state
 		end
-		for _, prefix in ipairs({ "ownleft", "otherleft", "ownright", "otherright" }) do
+		if state.weather == WEATHER.UNKNOWN then
+			state.weather = previousState.weather
+		end
+		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
 			local idKey = prefix .. "id"
 			local hpKey = prefix .. "hp"
 			local statusKey = prefix .. "status"
@@ -386,6 +488,12 @@ local function EncounterDetailsExtension()
 			if state[confusedKey] == CONFUSION_UNKNOWN and state[idKey] == previousState[idKey] then
 				state[confusedKey] = previousState[confusedKey]
 			end
+			for _, stageKey in ipairs(STAT_STAGE_KEYS) do
+				local field = prefix .. stageKey .. "stage"
+				if state[field] == STAT_STAGE_UNKNOWN and state[idKey] == previousState[idKey] then
+					state[field] = previousState[field]
+				end
+			end
 		end
 		return state
 	end
@@ -394,12 +502,21 @@ local function EncounterDetailsExtension()
 		if first == nil or second == nil then
 			return false
 		end
-		for _, prefix in ipairs({ "ownleft", "otherleft", "ownright", "otherright" }) do
+		if first.weather ~= second.weather then
+			return false
+		end
+		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
 			if first[prefix .. "id"] ~= second[prefix .. "id"]
 				or first[prefix .. "hp"] ~= second[prefix .. "hp"]
 				or first[prefix .. "status"] ~= second[prefix .. "status"]
 				or first[prefix .. "confused"] ~= second[prefix .. "confused"] then
 				return false
+			end
+			for _, stageKey in ipairs(STAT_STAGE_KEYS) do
+				local field = prefix .. stageKey .. "stage"
+				if first[field] ~= second[field] then
+					return false
+				end
 			end
 		end
 		return true
@@ -411,24 +528,30 @@ local function EncounterDetailsExtension()
 			return
 		end
 
+		local columns = {
+			"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid",
+			"actiontype", "moveid", "iscritical", "weather",
+		}
+		local values = {
+			current.id, action.sequence, action.turn, action.actionindex, action.actorindex,
+			action.actorpokemonid, action.actiontype, action.moveid, action.iscritical or 0, state.weather,
+		}
+		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
+			for _, field in ipairs({ "id", "hp", "status", "confused" }) do
+				table.insert(columns, prefix .. field)
+				table.insert(values, state[prefix .. field])
+			end
+			for _, stageKey in ipairs(STAT_STAGE_KEYS) do
+				local field = prefix .. stageKey .. "stage"
+				table.insert(columns, field)
+				table.insert(values, state[field])
+			end
+		end
 		SQL.opendatabase(self.dbKey)
 		SQL.writecommand(listToSqlCmd({
-			"INSERT OR REPLACE INTO",
-			self.timelineTableKey,
-			"(battleid, sequence, turn, actionindex, actorindex, actorpokemonid, actiontype, moveid, iscritical,",
-			"ownleftid, ownlefthp, ownleftstatus, ownleftconfused,",
-			"otherleftid, otherlefthp, otherleftstatus, otherleftconfused,",
-			"ownrightid, ownrighthp, ownrightstatus, ownrightconfused,",
-			"otherrightid, otherrighthp, otherrightstatus, otherrightconfused)",
-			"VALUES (",
-			current.id, ",", action.sequence, ",", action.turn, ",", action.actionindex, ",",
-			action.actorindex, ",", action.actorpokemonid, ",", action.actiontype, ",", action.moveid, ",",
-			action.iscritical or 0, ",",
-			state.ownleftid, ",", state.ownlefthp, ",", state.ownleftstatus, ",", state.ownleftconfused, ",",
-			state.otherleftid, ",", state.otherlefthp, ",", state.otherleftstatus, ",", state.otherleftconfused, ",",
-			state.ownrightid, ",", state.ownrighthp, ",", state.ownrightstatus, ",", state.ownrightconfused, ",",
-			state.otherrightid, ",", state.otherrighthp, ",", state.otherrightstatus, ",", state.otherrightconfused,
-			")"
+			"INSERT OR REPLACE INTO", self.timelineTableKey,
+			"(" .. table.concat(columns, ", ") .. ")",
+			"VALUES (" .. table.concat(values, ", ") .. ")"
 		}))
 	end
 
@@ -1197,12 +1320,16 @@ local function EncounterDetailsExtension()
 	local TIMELINE_HP_BAR_HEIGHT = 5
 	local TIMELINE_NUMBER_FIELDS = {
 		"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid", "actiontype", "moveid",
-		"iscritical",
-		"ownleftid", "ownlefthp", "ownleftstatus", "ownleftconfused",
-		"otherleftid", "otherlefthp", "otherleftstatus", "otherleftconfused",
-		"ownrightid", "ownrighthp", "ownrightstatus", "ownrightconfused",
-		"otherrightid", "otherrighthp", "otherrightstatus", "otherrightconfused",
+		"iscritical", "weather",
 	}
+	for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
+		for _, field in ipairs({ "id", "hp", "status", "confused" }) do
+			table.insert(TIMELINE_NUMBER_FIELDS, prefix .. field)
+		end
+		for _, stageKey in ipairs(STAT_STAGE_KEYS) do
+			table.insert(TIMELINE_NUMBER_FIELDS, prefix .. stageKey .. "stage")
+		end
+	end
 
 	local function getPokemonName(pokemonID)
 		if PokemonData.isValid(pokemonID) then
@@ -1260,8 +1387,15 @@ local function EncounterDetailsExtension()
 		end
 	end
 
-	local function getConditionText(entry, previousEntry, prefix)
+	local function getPokemonStateText(entry, previousEntry, prefix)
 		local parts = {}
+		for _, stageKey in ipairs(STAT_STAGE_KEYS) do
+			local stage = entry[prefix .. stageKey .. "stage"]
+			if stage ~= nil and stage ~= STAT_STAGE_UNKNOWN and stage ~= 0 then
+				table.insert(parts, string.format("%+d %s", stage, STAT_STAGE_NAMES[stageKey]))
+			end
+		end
+
 		local currentStatus = entry[prefix .. "status"] or MAJOR_STATUS.UNKNOWN
 		local previousStatus = MAJOR_STATUS.UNKNOWN
 		if previousEntry ~= nil then
@@ -1291,6 +1425,23 @@ local function EncounterDetailsExtension()
 
 		if #parts == 0 then return nil end
 		return table.concat(parts, ", ")
+	end
+
+	local function getWeatherText(entry, previousEntry)
+		local weather = entry.weather
+		if weather == nil or weather == WEATHER.UNKNOWN then
+			return nil
+		end
+		local previousWeather = previousEntry and previousEntry.weather or WEATHER.UNKNOWN
+		local weatherName = WEATHER_NAMES[weather] or Constants.HIDDEN_INFO
+		if previousWeather ~= WEATHER.UNKNOWN and previousWeather ~= weather then
+			local previousName = WEATHER_NAMES[previousWeather] or Constants.HIDDEN_INFO
+			return string.format("Weather: %s > %s", previousName, weatherName)
+		end
+		if weather ~= WEATHER.NONE then
+			return "Weather: " .. weatherName
+		end
+		return nil
 	end
 
 	BT_SCREEN.Buttons = {
@@ -1416,7 +1567,12 @@ local function EncounterDetailsExtension()
 			end
 
 			y = y + Constants.SCREEN.LINESPACING + 3
-			Drawing.drawText(canvas.x + 4, y, Utils.inlineIf(entry.sequence == 0, "Before", "After"),
+			local stateHeading = Utils.inlineIf(entry.sequence == 0, "Before", "After")
+			local weatherText = getWeatherText(entry, previousEntry)
+			if weatherText ~= nil then
+				stateHeading = stateHeading .. " | " .. weatherText
+			end
+			Drawing.drawText(canvas.x + 4, y, fitTimelineText(stateHeading, canvas.width - 8),
 				Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
 			y = y + Constants.SCREEN.LINESPACING
 			local isDoubleBattle = entry.ownrightid ~= 0 or entry.otherrightid ~= 0
@@ -1432,14 +1588,27 @@ local function EncounterDetailsExtension()
 				local pokemonID = entry[row.prefix .. "id"] or 0
 				if pokemonID ~= 0 then
 					local text = row.label .. " " .. getPokemonName(pokemonID)
-					Drawing.drawText(canvas.x + 4, y, fitTimelineText(text, canvas.width - 8),
-						canvas.text, canvas.shadow)
+					local conditionText = getPokemonStateText(entry, previousEntry, row.prefix)
+					if conditionText == nil then
+						Drawing.drawText(canvas.x + 4, y, fitTimelineText(text, canvas.width - 8),
+							canvas.text, canvas.shadow)
+					else
+						local maxConditionWidth = math.floor((canvas.width - 12) * 0.65)
+						conditionText = fitTimelineText(conditionText, maxConditionWidth)
+						local conditionWidth = Utils.calcWordPixelLength(conditionText)
+						local nameWidth = canvas.width - conditionWidth - 13
+						Drawing.drawText(canvas.x + 4, y, fitTimelineText(text, nameWidth),
+							canvas.text, canvas.shadow)
+						Drawing.drawText(canvas.x + canvas.width - conditionWidth - 4, y, conditionText,
+							canvas.text, canvas.shadow)
+					end
 					y = y + Constants.SCREEN.LINESPACING + Utils.inlineIf(isDoubleBattle, 0, 1)
-					drawHPBar(barX, y + 1, entry[row.prefix .. "hp"], canvas)
-					local conditionText = getConditionText(entry, previousEntry, row.prefix)
-					if conditionText ~= nil then
-						local conditionWidth = canvas.x + canvas.width - 4 - conditionX
-						Drawing.drawText(conditionX, y, fitTimelineText(conditionText, conditionWidth),
+					local hpPixels = entry[row.prefix .. "hp"] or HP_UNKNOWN
+					drawHPBar(barX, y + 1, hpPixels, canvas)
+					if extensionSettings.showHPPixels and hpPixels >= 0 then
+						local filledPixels = math.max(0, math.min(math.floor(hpPixels), HP_BAR_PIXELS))
+						Drawing.drawText(conditionX, y,
+							string.format("%s/%s pixels", filledPixels, HP_BAR_PIXELS),
 							canvas.text, canvas.shadow)
 					end
 					y = y + TIMELINE_HP_BAR_HEIGHT + Utils.inlineIf(isDoubleBattle, 3, 4)
@@ -2056,6 +2225,7 @@ local function EncounterDetailsExtension()
 		extensionSettings.noPiggy = TrackerAPI.getExtensionSetting(self.name, "noPiggy") or false
 		extensionSettings.ignoreWilds = TrackerAPI.getExtensionSetting(self.name, "ignoreWilds") or false
 		extensionSettings.storeBattleLogs = TrackerAPI.getExtensionSetting(self.name, "storeBattleLogs") ~= false
+		extensionSettings.showHPPixels = TrackerAPI.getExtensionSetting(self.name, "showHPPixels") ~= false
 
 		loadData()
 		PreviousEncountersScreen.initialize()
@@ -2194,7 +2364,7 @@ local function EncounterDetailsExtension()
 	function self.configureOptions()
 		if not Main.IsOnBizhawk() then return end
 		Program.destroyActiveForm()
-		local form = forms.newform(320, 150, "Encounter Details Settings", function() client.unpause() end)
+		local form = forms.newform(320, 170, "Encounter Details Settings", function() client.unpause() end)
 		Utils.setFormLocation(form, 100, 50)
 		local ignoreWildsOriginal = extensionSettings.ignoreWilds
 		local storeBattleLogsOriginal = extensionSettings.storeBattleLogs
@@ -2202,18 +2372,22 @@ local function EncounterDetailsExtension()
 		local noPiggySelection = forms.checkbox(form, "no piggy : (", 10, 30)
 		local ignoreWildsSelection = forms.checkbox(form, "ignore wilds", 10, 50)
 		local storeBattleLogsSelection = forms.checkbox(form, "store battle logs", 10, 70)
+		local showHPPixelsSelection = forms.checkbox(form, "show HP as N/48 pixels", 10, 90)
 		forms.setproperty(noPiggySelection, "Checked", extensionSettings.noPiggy)
 		forms.setproperty(ignoreWildsSelection, "Checked", extensionSettings.ignoreWilds)
 		forms.setproperty(storeBattleLogsSelection, "Checked", extensionSettings.storeBattleLogs)
+		forms.setproperty(showHPPixelsSelection, "Checked", extensionSettings.showHPPixels)
 
 		forms.button(form, "Save", function()
 			extensionSettings.ignoreWilds = forms.ischecked(ignoreWildsSelection)
 			extensionSettings.noPiggy = forms.ischecked(noPiggySelection)
 			extensionSettings.storeBattleLogs = forms.ischecked(storeBattleLogsSelection)
+			extensionSettings.showHPPixels = forms.ischecked(showHPPixelsSelection)
 
 			TrackerAPI.saveExtensionSetting(self.name, "ignoreWilds", extensionSettings.ignoreWilds)
 			TrackerAPI.saveExtensionSetting(self.name, "noPiggy", extensionSettings.noPiggy)
 			TrackerAPI.saveExtensionSetting(self.name, "storeBattleLogs", extensionSettings.storeBattleLogs)
+			TrackerAPI.saveExtensionSetting(self.name, "showHPPixels", extensionSettings.showHPPixels)
 			if storeBattleLogsOriginal and not extensionSettings.storeBattleLogs then
 				discardBattleLog()
 			end
@@ -2223,11 +2397,11 @@ local function EncounterDetailsExtension()
 			end
 			client.unpause()
 			forms.destroy(form)
-		end, 90, 95)
+		end, 90, 115)
 		forms.button(form, "Cancel", function()
 			client.unpause()
 			forms.destroy(form)
-		end, 10, 95)
+		end, 10, 115)
 	end
 
 	return self
