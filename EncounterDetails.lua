@@ -15,7 +15,7 @@ local function EncounterDetailsExtension()
 	self.encounterTableKey = self.name .. "Encounters"
 	self.battleTableKey = self.name .. "Battles"
 	self.encounterBattleTableKey = self.name .. "EncounterBattles"
-	self.timelineTableKey = self.name .. "BattleTimeline"
+	self.timelineTableKey = self.name .. "BattleEvents"
 	local extensionSettings = {
 		noPiggy = false,
 		ignoreWilds = false,
@@ -86,6 +86,72 @@ local function EncounterDetailsExtension()
 	local WAIT_MESSAGE_OPCODE = 0x12
 	local BATTLE_COMM_MESSAGE_DISPLAY_OFFSET = 7
 	local HITMARKER_ATTACKSTRING_PRINTED = 0x400
+	local HITMARKER_UNABLE_TO_USE_MOVE = 0x80000
+	local EVENT_KIND = { TICK = 1, BLOCKED = 2, RECOVERY = 3, EFFECT = 4 }
+	local EVENT_REASON = {
+		POISON = 1, TOXIC = 2, BURN = 3, SAND = 4, HAIL = 5,
+		SLEEP = 6, FREEZE = 7, PARALYSIS = 8, WAKE = 9, THAW = 10,
+		FLINCH = 11, CONFUSION = 12, RECHARGE = 13, ATTRACTION = 14,
+		TRAPPING = 15, CURSE = 16, NIGHTMARE = 17, LEFTOVERS = 18, INGRAIN = 19,
+		LEECH_SEED = 20, RECOIL = 21, LEECH_OOZE = 22,
+	}
+	local EVENT_LABELS = {
+		[EVENT_REASON.POISON] = "Poison damage",
+		[EVENT_REASON.TOXIC] = "Toxic damage",
+		[EVENT_REASON.BURN] = "Burn damage",
+		[EVENT_REASON.SAND] = "Sandstorm damage",
+		[EVENT_REASON.HAIL] = "Hail damage",
+		[EVENT_REASON.SLEEP] = "Unable: asleep",
+		[EVENT_REASON.FREEZE] = "Unable: frozen",
+		[EVENT_REASON.PARALYSIS] = "Unable: paralysis",
+		[EVENT_REASON.WAKE] = "Woke up",
+		[EVENT_REASON.THAW] = "Thawed out",
+		[EVENT_REASON.FLINCH] = "Unable: flinched",
+		[EVENT_REASON.CONFUSION] = "Confusion self-hit",
+		[EVENT_REASON.RECHARGE] = "Unable: recharge",
+		[EVENT_REASON.ATTRACTION] = "Unable: attraction",
+		[EVENT_REASON.TRAPPING] = "Trapping damage",
+		[EVENT_REASON.CURSE] = "Curse damage",
+		[EVENT_REASON.NIGHTMARE] = "Nightmare damage",
+		[EVENT_REASON.LEFTOVERS] = "Leftovers healing",
+		[EVENT_REASON.INGRAIN] = "Ingrain healing",
+		[EVENT_REASON.LEECH_SEED] = "Leech Seed drain",
+		[EVENT_REASON.RECOIL] = "Recoil damage",
+		[EVENT_REASON.LEECH_OOZE] = "Leech Seed: Liquid Ooze",
+	}
+	local MESSAGE_EVENTS = {
+		[42] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.POISON },
+		[48] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.BURN },
+		[102] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.SAND },
+		[103] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.HAIL },
+		[107] = { kind = EVENT_KIND.BLOCKED, reason = EVENT_REASON.SLEEP },
+		[51] = { kind = EVENT_KIND.BLOCKED, reason = EVENT_REASON.FREEZE },
+		[57] = { kind = EVENT_KIND.BLOCKED, reason = EVENT_REASON.PARALYSIS },
+		[108] = { kind = EVENT_KIND.RECOVERY, reason = EVENT_REASON.WAKE },
+		[110] = { kind = EVENT_KIND.RECOVERY, reason = EVENT_REASON.WAKE },
+		[52] = { kind = EVENT_KIND.RECOVERY, reason = EVENT_REASON.THAW, target = true },
+		[53] = { kind = EVENT_KIND.RECOVERY, reason = EVENT_REASON.THAW },
+		[54] = { kind = EVENT_KIND.RECOVERY, reason = EVENT_REASON.THAW },
+		[74] = { kind = EVENT_KIND.BLOCKED, reason = EVENT_REASON.FLINCH },
+		[230] = { kind = EVENT_KIND.BLOCKED, reason = EVENT_REASON.CONFUSION, waitForHP = true },
+		[130] = { kind = EVENT_KIND.BLOCKED, reason = EVENT_REASON.RECHARGE },
+		[71] = { kind = EVENT_KIND.BLOCKED, reason = EVENT_REASON.ATTRACTION },
+		[94] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.TRAPPING },
+		[147] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.CURSE },
+		[145] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.NIGHTMARE },
+		[301] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.LEFTOVERS },
+		[180] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.INGRAIN },
+		[106] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.LEECH_SEED, hpUpdatesBeforeMessage = 2, leechTable = true },
+		[100] = { kind = EVENT_KIND.EFFECT, reason = EVENT_REASON.RECOIL, hpUpdatesBeforeMessage = 1 },
+		[313] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.LEECH_OOZE, hpUpdatesBeforeMessage = 2, leechTable = true },
+	}
+	local BATTLE_SCRIPT = {
+		ROM_START = 0x08000000, ROM_END = 0x0A000000,
+		PRINT = 0x10, PRINT_TABLE = 0x13, DATA_HP = 0x0C,
+		PRINT_SIZE = 3, PRINT_TABLE_SIZE = 5, TABLE_SELECTOR_OFFSET = 5,
+		TARGET = 0, ATTACKER = 1, RECENT_HP_UPDATES = 2,
+		LEECH_MESSAGES = { 104, 105, 27, 106, 313 },
+	}
 	local BATTLE_TYPE_GHOST_BIT = 15
 	local BATTLE_TYPE_GHOST_UNVEILED_BIT = 13
 	local currentBattle = nil
@@ -204,6 +270,10 @@ local function EncounterDetailsExtension()
 			"moveid INTEGER",
 			"iscritical INTEGER",
 			"weather INTEGER",
+			"eventkind INTEGER",
+			"eventreason INTEGER",
+			"subjectindex INTEGER",
+			"subjectpokemonid INTEGER",
 		}
 		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
 			for _, field in ipairs({ "id", "hp", "status", "confused" }) do
@@ -254,8 +324,7 @@ local function EncounterDetailsExtension()
 
 		SQL.opendatabase(self.dbKey)
 		local res = SQL.readcommand(listToSqlCmd({
-			"SELECT * FROM",
-			self.timelineTableKey,
+			"SELECT * FROM", self.timelineTableKey,
 			"WHERE battleid =",
 			battleID,
 			"ORDER BY sequence ASC"
@@ -532,11 +601,13 @@ local function EncounterDetailsExtension()
 
 		local columns = {
 			"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid",
-			"actiontype", "moveid", "iscritical", "weather",
+			"actiontype", "moveid", "iscritical", "weather", "eventkind", "eventreason", "subjectindex", "subjectpokemonid",
 		}
 		local values = {
 			current.id, action.sequence, action.turn, action.actionindex, action.actorindex,
 			action.actorpokemonid, action.actiontype, action.moveid, action.iscritical or 0, state.weather,
+			action.eventkind or 0, action.eventreason or 0, action.subjectindex or action.actorindex,
+			action.subjectpokemonid or action.actorpokemonid,
 		}
 		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
 			for _, field in ipairs({ "id", "hp", "status", "confused" }) do
@@ -557,6 +628,13 @@ local function EncounterDetailsExtension()
 		}))
 	end
 
+	local function getBattleScriptPointer()
+		if not GameSettings.gBattlescriptCurrInstr then return nil end
+		local pointer = Memory.readdword(GameSettings.gBattlescriptCurrInstr)
+		if pointer >= BATTLE_SCRIPT.ROM_START and pointer < BATTLE_SCRIPT.ROM_END then return pointer end
+		return nil
+	end
+
 	local function updateBattleState()
 		local current = currentBattle
 		if current == nil then
@@ -564,12 +642,43 @@ local function EncounterDetailsExtension()
 		end
 
 		local nextState = mergeUnknownState(getBattleState(), current.latestState)
-		if battleStatesEqual(nextState, current.latestState) then
-			return
-		end
+		local changed = not battleStatesEqual(nextState, current.latestState)
 		current.latestState = nextState
+		local action = current.pendingAction or current.initialAction
+		if action.sealed then return end
+		if changed then saveTimelineEvent(action, current.latestState) end
+		if action.waitForHP then
+			local pointer = getBattleScriptPointer()
+			if action.hpUpdatePointer and pointer ~= action.hpUpdatePointer then
+				action.sealed = true
+			elseif pointer and Memory.readbyte(pointer) == BATTLE_SCRIPT.DATA_HP then
+				action.hpUpdatePointer = pointer
+			end
+		end
+	end
 
-		saveTimelineEvent(current.pendingAction or current.initialAction, current.latestState)
+	local function observeHPUpdate()
+		local current = currentBattle
+		if not current or GameSettings.game ~= 3 then return end
+		local pointer = getBattleScriptPointer()
+		if current.hpUpdate and pointer ~= current.hpUpdate.pointer then
+			table.insert(current.recentHPUpdates, current.hpUpdate)
+			if #current.recentHPUpdates > BATTLE_SCRIPT.RECENT_HP_UPDATES then table.remove(current.recentHPUpdates, 1) end
+			current.hpUpdate = nil
+		end
+		if not pointer or Memory.readbyte(pointer) ~= BATTLE_SCRIPT.DATA_HP or current.hpUpdate then return end
+		local operand = Memory.readbyte(pointer + 1)
+		local address
+		if operand == BATTLE_SCRIPT.ATTACKER then address = GameSettings.gBattlerAttacker end
+		if operand == BATTLE_SCRIPT.TARGET then address = GameSettings.gBattlerTarget end
+		if not address then return end
+		local subject = Memory.readbyte(address)
+		if subject >= Battle.numBattlers or getActivePokemonID(subject) == 0 then return end
+		current.hpUpdate = {
+			pointer = pointer, subject = subject,
+			owner = current.pendingAction or current.initialAction,
+			before = mergeUnknownState(getBattleState(), current.latestState),
+		}
 	end
 
 	local function startBattleLog()
@@ -580,6 +689,7 @@ local function EncounterDetailsExtension()
 			pendingAction = nil,
 			waitingForCritMessage = false,
 			latestState = nil,
+			recentHPUpdates = {},
 			nextSequence = 1,
 			initialAction = {
 				sequence = 0,
@@ -648,6 +758,7 @@ local function EncounterDetailsExtension()
 
 		updateBattleState()
 		current.actionKey = action.key
+		current.hpUpdate, current.recentHPUpdates = nil, {}
 		current.waitingForCritMessage = false
 		action.sequence = current.nextSequence
 		current.nextSequence = current.nextSequence + 1
@@ -661,12 +772,24 @@ local function EncounterDetailsExtension()
 			return
 		end
 		local action = current.pendingAction
+		local hitMarker = Memory.readdword(GameSettings.gHitMarker)
+		if Utils.bit_and(hitMarker, HITMARKER_UNABLE_TO_USE_MOVE) ~= 0 then return end
+		if action.eventkind == EVENT_KIND.RECOVERY and Utils.bit_and(hitMarker, HITMARKER_ATTACKSTRING_PRINTED) ~= 0 then
+			local resumed = getBattleAction()
+			if resumed and resumed.key == current.actionKey and resumed.actorindex == action.subjectindex then
+				resumed.sequence = current.nextSequence
+				current.nextSequence = current.nextSequence + 1
+				current.pendingAction = resumed
+				action = resumed
+				saveTimelineEvent(action, current.latestState)
+			end
+		end
+		if action.eventkind then return end
 		if action.actiontype ~= 0 or action.moveid ~= 0
 			or Memory.readbyte(GameSettings.gCurrentTurnActionNumber) ~= action.actionindex then
 			return
 		end
 
-		local hitMarker = Memory.readdword(GameSettings.gHitMarker)
 		if Utils.bit_and(hitMarker, HITMARKER_ATTACKSTRING_PRINTED) == 0 then
 			return
 		end
@@ -678,6 +801,88 @@ local function EncounterDetailsExtension()
 			action.moveid = moveID
 			saveTimelineEvent(action, current.latestState)
 		end
+	end
+
+	local function updateBattleMessage()
+		local current = currentBattle
+		if not current or GameSettings.game ~= 3 then return end
+		local pointer = getBattleScriptPointer()
+		if not pointer or Memory.readbyte(pointer) ~= WAIT_MESSAGE_OPCODE
+			or Memory.readbyte(GameSettings.gBattleCommunication + BATTLE_COMM_MESSAGE_DISPLAY_OFFSET) ~= 1 then
+			current.messageKey = nil
+			return
+		end
+		local messageID, tablePointer
+		local tableCommand = pointer - BATTLE_SCRIPT.PRINT_TABLE_SIZE
+		local printCommand = pointer - BATTLE_SCRIPT.PRINT_SIZE
+		if tableCommand >= BATTLE_SCRIPT.ROM_START and Memory.readbyte(tableCommand) == BATTLE_SCRIPT.PRINT_TABLE then
+			tablePointer = Memory.readdword(tableCommand + 1)
+			local selector = Memory.readbyte(GameSettings.gBattleCommunication + BATTLE_SCRIPT.TABLE_SELECTOR_OFFSET)
+			local entryPointer = tablePointer + selector * 2
+			if tablePointer >= BATTLE_SCRIPT.ROM_START and entryPointer + 2 <= BATTLE_SCRIPT.ROM_END then
+				messageID = Memory.readword(entryPointer)
+			end
+		elseif printCommand >= BATTLE_SCRIPT.ROM_START and Memory.readbyte(printCommand) == BATTLE_SCRIPT.PRINT then
+			messageID = Memory.readword(printCommand + 1)
+		end
+		local definition = MESSAGE_EVENTS[messageID]
+		if not definition then current.messageKey = nil return end
+		if definition.leechTable then
+			if not tablePointer or tablePointer < BATTLE_SCRIPT.ROM_START
+				or tablePointer + #BATTLE_SCRIPT.LEECH_MESSAGES * 2 > BATTLE_SCRIPT.ROM_END then return end
+			for index, expected in ipairs(BATTLE_SCRIPT.LEECH_MESSAGES) do
+				if Memory.readword(tablePointer + (index - 1) * 2) ~= expected then return end
+			end
+		end
+		local subjectAddress = definition.target and GameSettings.gBattlerTarget or GameSettings.gBattlerAttacker
+		if not subjectAddress then return end
+		local subject = Memory.readbyte(subjectAddress)
+		if subject >= Battle.numBattlers or getActivePokemonID(subject) == 0 then return end
+		local messageKey = string.format("%s:%s:%s", pointer, messageID, subject)
+		if current.messageKey == messageKey then return end
+		current.messageKey = messageKey
+		if definition.reason == EVENT_REASON.SLEEP
+			and Utils.bit_and(Memory.readdword(GameSettings.gHitMarker), HITMARKER_UNABLE_TO_USE_MOVE) == 0 then return end
+		if definition.reason == EVENT_REASON.CONFUSION and readConfused(subject) ~= 1 then return end
+		local reason = definition.reason
+		if reason == EVENT_REASON.POISON and readMajorStatus(subject) == MAJOR_STATUS.TOXIC then reason = EVENT_REASON.TOXIC end
+		local pending = current.pendingAction
+		local actor = subject
+		if definition.hpUpdatesBeforeMessage == 2 then
+			if not GameSettings.gBattlerTarget then return end
+			actor = Memory.readbyte(GameSettings.gBattlerTarget)
+			if actor == subject or actor >= Battle.numBattlers or getActivePokemonID(actor) == 0 then return end
+		end
+		if definition.hpUpdatesBeforeMessage then
+			local updates = current.recentHPUpdates
+			local first = updates[#updates - definition.hpUpdatesBeforeMessage + 1]
+			local last = updates[#updates]
+			if first and last and first.subject == subject and last.subject == actor
+				and first.owner == last.owner and first.owner == (pending or current.initialAction) and not first.owner.sealed then
+				saveTimelineEvent(first.owner, first.before)
+			end
+		end
+		local reuseAction = (definition.kind == EVENT_KIND.BLOCKED or definition.kind == EVENT_KIND.RECOVERY)
+			and pending and not pending.eventkind
+			and pending.actiontype == 0 and pending.moveid == 0 and pending.actorindex == subject
+		local waitForHP = not definition.hpUpdatesBeforeMessage and (definition.kind == EVENT_KIND.TICK or definition.waitForHP == true)
+		local event = {
+			sequence = reuseAction and pending.sequence or current.nextSequence,
+			turn = pending and pending.turn or math.max(0, Battle.turnCount + 1),
+			actionindex = definition.kind == EVENT_KIND.BLOCKED and pending and pending.actionindex or -1,
+			actorindex = actor, actorpokemonid = getActivePokemonID(actor),
+			actiontype = -1, moveid = 0, iscritical = 0,
+			eventkind = definition.kind, eventreason = reason,
+			subjectindex = subject, subjectpokemonid = getActivePokemonID(subject),
+			waitForHP = waitForHP,
+			sealed = not waitForHP,
+		}
+		if not reuseAction then current.nextSequence = current.nextSequence + 1 end
+		current.pendingAction = event
+		current.hpUpdate, current.recentHPUpdates = nil, {}
+		current.waitingForCritMessage = false
+		current.latestState = mergeUnknownState(getBattleState(), current.latestState)
+		saveTimelineEvent(event, current.latestState)
 	end
 
 	local function updateCriticalHit()
@@ -722,7 +927,7 @@ local function EncounterDetailsExtension()
 
 	local function finishBattleLog()
 		local current = currentBattle
-		if current ~= nil and current.pendingAction ~= nil then
+		if current ~= nil and current.pendingAction ~= nil and not current.pendingAction.sealed then
 			saveTimelineEvent(current.pendingAction, current.latestState)
 		end
 		currentBattle = nil
@@ -1335,7 +1540,7 @@ local function EncounterDetailsExtension()
 	local TIMELINE_HP_BAR_HEIGHT = 5
 	local TIMELINE_NUMBER_FIELDS = {
 		"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid", "actiontype", "moveid",
-		"iscritical", "weather",
+		"iscritical", "weather", "eventkind", "eventreason", "subjectindex", "subjectpokemonid",
 	}
 	for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
 		for _, field in ipairs({ "id", "hp", "status", "confused" }) do
@@ -1557,12 +1762,31 @@ local function EncounterDetailsExtension()
 			if entry.sequence == 0 then
 				Drawing.drawText(canvas.x + 4, y, "Battle start", canvas.text, canvas.shadow)
 			else
+				local heading = string.format("Turn %s, action %s", entry.turn, entry.actionindex + 1)
+				if entry.eventkind == EVENT_KIND.TICK then
+					heading = string.format("Turn %s, end turn", entry.turn)
+				elseif entry.eventkind == EVENT_KIND.RECOVERY or entry.actionindex < 0 then
+					heading = string.format("Turn %s", entry.turn)
+				end
 				Drawing.drawText(canvas.x + 4, y,
-					string.format("Turn %s, action %s", entry.turn, entry.actionindex + 1), canvas.text, canvas.shadow)
+					fitTimelineText(heading, canvas.width - 8), canvas.text, canvas.shadow)
 				y = y + Constants.SCREEN.LINESPACING
-				local side = Utils.inlineIf(entry.actorindex % 2 == 0, "Player", "Foe")
+				local subject = entry.eventkind ~= 0 and entry.subjectindex or entry.actorindex
+				local pokemonID = entry.eventkind ~= 0 and entry.subjectpokemonid or entry.actorpokemonid
+				local side = Utils.inlineIf(subject % 2 == 0, "Player", "Foe")
+				if entry.ownrightid ~= 0 or entry.otherrightid ~= 0 then
+					side = side .. " " .. tostring(math.floor(subject / 2) + 1)
+				end
+				local subjectText = side .. ": " .. getPokemonName(pokemonID)
+				if entry.eventreason == EVENT_REASON.LEECH_SEED or entry.eventreason == EVENT_REASON.LEECH_OOZE then
+					local recipient = Utils.inlineIf(entry.actorindex % 2 == 0, "Player", "Foe")
+					if entry.ownrightid ~= 0 or entry.otherrightid ~= 0 then
+						recipient = recipient .. " " .. tostring(math.floor(entry.actorindex / 2) + 1)
+					end
+					subjectText = side .. " -> " .. recipient
+				end
 				Drawing.drawText(canvas.x + 4, y,
-					fitTimelineText(side .. ": " .. getPokemonName(entry.actorpokemonid), canvas.width - 8),
+					fitTimelineText(subjectText, canvas.width - 8),
 					canvas.text, canvas.shadow)
 				y = y + Constants.SCREEN.LINESPACING
 				local actionText = ACTION_TYPES[entry.actiontype] or "Action"
@@ -1572,7 +1796,8 @@ local function EncounterDetailsExtension()
 						actionText = MoveData.Moves[entry.moveid].name
 					end
 				end
-				Drawing.drawText(canvas.x + 4, y, fitTimelineText("Action: " .. actionText, canvas.width - 8),
+				actionText = EVENT_LABELS[entry.eventreason] or ("Action: " .. actionText)
+				Drawing.drawText(canvas.x + 4, y, fitTimelineText(actionText, canvas.width - 8),
 					Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
 				if entry.iscritical == 1 then
 					y = y + Constants.SCREEN.LINESPACING
@@ -2238,12 +2463,14 @@ local function EncounterDetailsExtension()
 				local fill = Theme.COLORS[NotebookPokemonSeen.Colors.boxFill]
 				Drawing.drawTransparentTextbox(textX, textY, Utils.shortenText(button:getCustomText(), textWidth, true),
 					Theme.COLORS[button.textColor], fill, shadowcolor)
-				Drawing.drawTransparentTextbox(textX, textY + Constants.SCREEN.LINESPACING, Utils.shortenText(seen, textWidth, true),
+				Drawing.drawTransparentTextbox(textX, textY + Constants.SCREEN.LINESPACING,
+					Utils.shortenText(seen, textWidth, true),
 					Theme.COLORS[NotebookPokemonSeen.Colors.text], fill, shadowcolor)
 			end
 			label.draw = labelDraw
 			table.insert(row.buttonList, pigButton)
-			table.insert(notebookRows, { row = row, button = pigButton, label = label, originalDraw = originalDraw, labelDraw = labelDraw })
+			table.insert(notebookRows,
+				{ row = row, button = pigButton, label = label, originalDraw = originalDraw, labelDraw = labelDraw })
 		end
 	end
 
@@ -2326,9 +2553,12 @@ local function EncounterDetailsExtension()
 			pigButton.box[1] - originalArea[1] - NOTEBOOK_PIGGY.TEXT_GAP, originalArea[4],
 		}
 		notebookNoteBinding = {
-			noteButton = noteButton, pigButton = pigButton,
-			originalGetText = originalGetText, originalArea = originalArea,
-			getText = getText, clickableArea = clickableArea,
+			noteButton = noteButton,
+			pigButton = pigButton,
+			originalGetText = originalGetText,
+			originalArea = originalArea,
+			getText = getText,
+			clickableArea = clickableArea,
 			previousButton = notes.Buttons.EncounterDetails,
 		}
 		noteButton.getText = getText
@@ -2341,8 +2571,10 @@ local function EncounterDetailsExtension()
 		local binding = notebookNoteBinding
 		local notes = NotebookPokemonNoteView
 		if binding.noteButton.getText == binding.getText then binding.noteButton.getText = binding.originalGetText end
-		if binding.noteButton.clickableArea == binding.clickableArea then binding.noteButton.clickableArea = binding.originalArea end
-		if notes.Buttons.EncounterDetails == binding.pigButton then notes.Buttons.EncounterDetails = binding.previousButton end
+		if binding.noteButton.clickableArea == binding.clickableArea then binding.noteButton.clickableArea = binding
+			.originalArea end
+		if notes.Buttons.EncounterDetails == binding.pigButton then notes.Buttons.EncounterDetails = binding
+			.previousButton end
 		if PE_SCREEN.previousScreen == notes then
 			if Program.currentScreen == PE_SCREEN or Program.currentScreen == BattleTimelineScreen then
 				Program.changeScreenView(notes)
@@ -2545,6 +2777,8 @@ local function EncounterDetailsExtension()
 		end
 
 		updateBattleAction()
+		observeHPUpdate()
+		updateBattleMessage()
 		updateVisibleMove()
 		updateCriticalHit()
 		updateBattleState()
