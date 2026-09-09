@@ -78,6 +78,9 @@ local function EncounterDetailsExtension()
 	local HP_UNKNOWN = -1
 	local HP_BAR_PIXELS = 48
 	local BATTLEMON_HP_OFFSET = 0x28
+	local BATTLEMON_LEVEL_OFFSET = 0x2A
+	local LEVEL_UNKNOWN = 0
+	local MAX_LEVEL = 100
 	local BATTLEMON_MAXHP_OFFSET = 0x2C
 	local BATTLEMON_STATUS1_OFFSET = 0x4C
 	local BATTLEMON_STATUS2_OFFSET = 0x50
@@ -327,6 +330,7 @@ local function EncounterDetailsExtension()
 			"actionindex INTEGER",
 			"actorindex INTEGER",
 			"actorpokemonid INTEGER",
+			"actorlevel INTEGER DEFAULT 0",
 			"actiontype INTEGER",
 			"moveid INTEGER",
 			"itemid INTEGER DEFAULT 0",
@@ -338,9 +342,10 @@ local function EncounterDetailsExtension()
 			"eventreason INTEGER",
 			"subjectindex INTEGER",
 			"subjectpokemonid INTEGER",
+			"subjectlevel INTEGER DEFAULT 0",
 		}
 		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
-			for _, field in ipairs({ "id", "hp", "status", "confused" }) do
+			for _, field in ipairs({ "id", "hp", "level", "status", "confused" }) do
 				table.insert(timelineColumns, prefix .. field .. " INTEGER")
 			end
 			for _, stageKey in ipairs(STAT_STAGE_KEYS) do
@@ -366,10 +371,12 @@ local function EncounterDetailsExtension()
 		for _, column in ipairs(reformatSqlReadResult(SQL.readcommand("PRAGMA table_info(" .. self.timelineTableKey .. ")"))) do
 			timelineFields[column.name] = true
 		end
-		for _, field in ipairs({ "hitcount", "critcount", "itemid" }) do
+		local optionalFields = { "hitcount", "critcount", "itemid", "actorlevel", "subjectlevel" }
+		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do table.insert(optionalFields, prefix .. "level") end
+		for _, field in ipairs(optionalFields) do
 			if not timelineFields[field] then
 				SQL.writecommand("ALTER TABLE " ..
-				self.timelineTableKey .. " ADD COLUMN " .. field .. " INTEGER DEFAULT 0")
+					self.timelineTableKey .. " ADD COLUMN " .. field .. " INTEGER DEFAULT 0")
 			end
 		end
 
@@ -461,6 +468,13 @@ local function EncounterDetailsExtension()
 		local monAddress = baseAddress + battlerIndex * Program.Addresses.sizeofBattlePokemon
 		local pokemonID = Memory.readword(monAddress)
 		return PokemonData.isValid(pokemonID) and pokemonID or 0
+	end
+
+	local function getActivePokemonLevel(battlerIndex)
+		if getActivePokemonID(battlerIndex) == 0 then return LEVEL_UNKNOWN end
+		local address = GameSettings.gBattleMons + battlerIndex * Program.Addresses.sizeofBattlePokemon
+		local level = Memory.readbyte(address + BATTLEMON_LEVEL_OFFSET)
+		return level >= 1 and level <= MAX_LEVEL and level or LEVEL_UNKNOWN
 	end
 
 	local function getHPBarPixels(battlerIndex)
@@ -604,6 +618,7 @@ local function EncounterDetailsExtension()
 			otherrightconfused = Utils.inlineIf(Battle.numBattlers == 4, readConfused(3), CONFUSION_UNKNOWN),
 		}
 		for battlerIndex, prefix in ipairs(BATTLE_STATE_PREFIXES) do
+			state[prefix .. "level"] = getActivePokemonLevel(battlerIndex - 1)
 			local stages = readStatStages(battlerIndex - 1)
 			for _, stageKey in ipairs(STAT_STAGE_KEYS) do
 				state[prefix .. stageKey .. "stage"] = stages[stageKey]
@@ -622,10 +637,14 @@ local function EncounterDetailsExtension()
 		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
 			local idKey = prefix .. "id"
 			local hpKey = prefix .. "hp"
+			local levelKey = prefix .. "level"
 			local statusKey = prefix .. "status"
 			local confusedKey = prefix .. "confused"
 			if state[hpKey] == HP_UNKNOWN and state[idKey] == previousState[idKey] then
 				state[hpKey] = previousState[hpKey]
+			end
+			if state[levelKey] == LEVEL_UNKNOWN and state[idKey] == previousState[idKey] then
+				state[levelKey] = previousState[levelKey]
 			end
 			if state[statusKey] == MAJOR_STATUS.UNKNOWN and state[idKey] == previousState[idKey] then
 				state[statusKey] = previousState[statusKey]
@@ -653,6 +672,7 @@ local function EncounterDetailsExtension()
 		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
 			if first[prefix .. "id"] ~= second[prefix .. "id"]
 				or first[prefix .. "hp"] ~= second[prefix .. "hp"]
+				or first[prefix .. "level"] ~= second[prefix .. "level"]
 				or first[prefix .. "status"] ~= second[prefix .. "status"]
 				or first[prefix .. "confused"] ~= second[prefix .. "confused"] then
 				return false
@@ -675,19 +695,23 @@ local function EncounterDetailsExtension()
 
 		local columns = {
 			"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid",
-			"actiontype", "moveid", "itemid", "iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason",
+			"actiontype", "moveid", "itemid", "iscritical", "hitcount", "critcount", "weather", "eventkind",
+			"eventreason",
 			"subjectindex",
 			"subjectpokemonid",
+			"actorlevel", "subjectlevel",
 		}
 		local values = {
 			current.id, action.sequence, action.turn, action.actionindex, action.actorindex,
-			action.actorpokemonid, action.actiontype, action.moveid, action.itemid or 0, action.iscritical or 0, action.hitcount or 0, action
+			action.actorpokemonid, action.actiontype, action.moveid, action.itemid or 0, action.iscritical or 0, action
+		.hitcount or 0, action
 		.critcount or 0, state.weather,
 			action.eventkind or 0, action.eventreason or 0, action.subjectindex or action.actorindex,
 			action.subjectpokemonid or action.actorpokemonid,
+			action.actorlevel or LEVEL_UNKNOWN, action.subjectlevel or action.actorlevel or LEVEL_UNKNOWN,
 		}
 		for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
-			for _, field in ipairs({ "id", "hp", "status", "confused" }) do
+			for _, field in ipairs({ "id", "hp", "level", "status", "confused" }) do
 				table.insert(columns, prefix .. field)
 				table.insert(values, state[prefix .. field])
 			end
@@ -817,6 +841,7 @@ local function EncounterDetailsExtension()
 			actionindex = actionIndex,
 			actorindex = actorIndex,
 			actorpokemonid = getActivePokemonID(actorIndex),
+			actorlevel = getActivePokemonLevel(actorIndex),
 			actiontype = actionType,
 			moveid = 0,
 			iscritical = 0,
@@ -1001,6 +1026,7 @@ local function EncounterDetailsExtension()
 			actionindex = definition.kind == EVENT_KIND.BLOCKED and pending and pending.actionindex or -1,
 			actorindex = actor,
 			actorpokemonid = getActivePokemonID(actor),
+			actorlevel = getActivePokemonLevel(actor),
 			actiontype = -1,
 			moveid = 0,
 			iscritical = 0,
@@ -1008,6 +1034,7 @@ local function EncounterDetailsExtension()
 			eventreason = reason,
 			subjectindex = subject,
 			subjectpokemonid = getActivePokemonID(subject),
+			subjectlevel = getActivePokemonLevel(subject),
 			waitForHP = waitForHP,
 			sealed = not waitForHP,
 		}
@@ -1684,9 +1711,10 @@ local function EncounterDetailsExtension()
 	local TIMELINE_NUMBER_FIELDS = {
 		"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid", "actiontype", "moveid", "itemid",
 		"iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason", "subjectindex", "subjectpokemonid",
+		"actorlevel", "subjectlevel",
 	}
 	for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
-		for _, field in ipairs({ "id", "hp", "status", "confused" }) do
+		for _, field in ipairs({ "id", "hp", "level", "status", "confused" }) do
 			table.insert(TIMELINE_NUMBER_FIELDS, prefix .. field)
 		end
 		for _, stageKey in ipairs(STAT_STAGE_KEYS) do
@@ -1710,6 +1738,11 @@ local function EncounterDetailsExtension()
 			shortened = shortened:sub(1, #shortened - 1)
 		end
 		return shortened .. ".."
+	end
+
+	local function pokemonLevelLabel(label, pokemonID, level, maxWidth)
+		local suffix = level and level >= 1 and level <= MAX_LEVEL and string.format(" lvl %d", level) or " lvl ?"
+		return fitTimelineText(label .. " " .. getPokemonName(pokemonID), maxWidth - Utils.calcWordPixelLength(suffix) - 1) .. suffix
 	end
 
 	local function drawHPBar(x, y, barPixels, canvas)
@@ -2008,7 +2041,8 @@ local function EncounterDetailsExtension()
 				if entry.ownrightid ~= 0 or entry.otherrightid ~= 0 then
 					side = side .. " " .. tostring(math.floor(subject / 2) + 1)
 				end
-				local subjectText = side .. ": " .. getPokemonName(pokemonID)
+				local level = entry.eventkind ~= 0 and entry.subjectlevel or entry.actorlevel
+				local subjectText = pokemonLevelLabel(side .. ":", pokemonID, level, canvas.width - 8)
 				if entry.eventreason == EVENT_REASON.LEECH_SEED or entry.eventreason == EVENT_REASON.LEECH_OOZE then
 					local recipient = Utils.inlineIf(entry.actorindex % 2 == 0, "Player", "Foe")
 					if entry.ownrightid ~= 0 or entry.otherrightid ~= 0 then
@@ -2067,7 +2101,8 @@ local function EncounterDetailsExtension()
 			for _, row in ipairs(stateRows) do
 				local pokemonID = entry[row.prefix .. "id"] or 0
 				if pokemonID ~= 0 then
-					row.conditionLines = getStateLines(getPokemonStateText(entry, previousEntry, row.prefix), canvas.width - 8)
+					row.conditionLines = getStateLines(getPokemonStateText(entry, previousEntry, row.prefix),
+						canvas.width - 8)
 					local rowHeight = Constants.SCREEN.LINESPACING + Utils.inlineIf(isDoubleBattle, 0, 1)
 						+ TIMELINE_HP_BAR_HEIGHT + Utils.inlineIf(isDoubleBattle, 3, 4)
 						+ #row.conditionLines * Constants.SCREEN.LINESPACING
@@ -2084,8 +2119,9 @@ local function EncounterDetailsExtension()
 			for _, row in ipairs(statePages[BT_SCREEN.statePage]) do
 				local pokemonID = entry[row.prefix .. "id"] or 0
 				if pokemonID ~= 0 then
-					local text = row.label .. " " .. getPokemonName(pokemonID)
-					Drawing.drawText(canvas.x + 4, y, fitTimelineText(text, canvas.width - 8), canvas.text, canvas.shadow)
+					local text = pokemonLevelLabel(row.label, pokemonID, entry[row.prefix .. "level"], canvas.width - 8)
+					Drawing.drawText(canvas.x + 4, y, text, canvas.text, canvas
+					.shadow)
 					for _, line in ipairs(row.conditionLines) do
 						y = y + Constants.SCREEN.LINESPACING
 						Drawing.drawText(canvas.x + 4, y, line, canvas.text, canvas.shadow)
@@ -2835,7 +2871,8 @@ local function EncounterDetailsExtension()
 			binding.nameButton.getCustomText = binding.originalNameText
 		end
 		if binding.nameButton.box == binding.nameBox then binding.nameButton.box = binding.originalNameBox end
-		if binding.nameButton.clickableArea == binding.nameBox then binding.nameButton.clickableArea = binding.originalNameArea end
+		if binding.nameButton.clickableArea == binding.nameBox then binding.nameButton.clickableArea = binding
+			.originalNameArea end
 		if notes.Buttons.EncounterDetails == binding.pigButton then
 			notes.Buttons.EncounterDetails = binding
 				.previousButton
