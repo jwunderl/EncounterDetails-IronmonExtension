@@ -995,7 +995,8 @@ local function EncounterDetailsExtension()
 					PE_SCREEN.examiningEncounter = nil
 					PE_SCREEN.examiningBattleID = nil
 				else
-					Program.changeScreenView(TrackerScreen)
+					Program.changeScreenView(PE_SCREEN.previousScreen or TrackerScreen)
+					PE_SCREEN.previousScreen = nil
 				end
 			end
 		)
@@ -2109,6 +2110,7 @@ local function EncounterDetailsExtension()
 				PreviousEncountersScreen.Tabs.Wild,
 				PreviousEncountersScreen.Tabs.Trainer
 			)
+		PE_SCREEN.previousScreen = nil
 		PreviousEncountersScreen.changePokemonID(pokemon.pokemonID)
 		PreviousEncountersScreen.changeTab(defaultTab)
 		Program.changeScreenView(PreviousEncountersScreen)
@@ -2163,11 +2165,114 @@ local function EncounterDetailsExtension()
 		onClick = function()
 			PE_SCREEN.openPokemonSelectWindow(function()
 				if PokemonData.isValid(PE_SCREEN.currentPokemonID) then
+					PE_SCREEN.previousScreen = nil
 					Program.changeScreenView(PreviousEncountersScreen)
 				end
 			end)
 		end
 	}
+
+	local NOTEBOOK_PIGGY = { WIDTH = 15, HEIGHT = 12, RIGHT_PADDING = 3, BOTTOM_PADDING = 3, TEXT_GAP = 4 }
+	local notebookRows = {}
+	local notebookOriginalBuild, notebookOriginalInput
+	local notebookBuild, notebookInput
+
+	local function decorateNotebookRows()
+		notebookRows = {}
+		for _, row in ipairs(NotebookPokemonSeen.Pager.Buttons) do
+			local label = row.buttonList[2]
+			local pokemonID = row.pokemon.id
+			local pigButton = {
+				type = Constants.ButtonTypes.PIXELIMAGE,
+				image = piggyPixelImage,
+				iconColors = pigColors,
+				textColor = "Default text",
+				box = { 0, 0, NOTEBOOK_PIGGY.WIDTH, NOTEBOOK_PIGGY.HEIGHT },
+				isVisible = function()
+					return row:isVisible() and PokemonData.isValid(pokemonID)
+				end,
+				alignToBox = function(button, box)
+					button.box[1] = box[1] + box[3] - NOTEBOOK_PIGGY.WIDTH - NOTEBOOK_PIGGY.RIGHT_PADDING
+					button.box[2] = box[2] + box[4] - NOTEBOOK_PIGGY.HEIGHT - NOTEBOOK_PIGGY.BOTTOM_PADDING
+				end,
+				onClick = function()
+					if not PokemonData.isValid(pokemonID) then return end
+					PE_SCREEN.previousScreen = NotebookPokemonSeen
+					PE_SCREEN.currentTab = extensionSettings.ignoreWilds and PE_SCREEN.Tabs.Trainer or PE_SCREEN.Tabs.All
+					PE_SCREEN.changePokemonID(pokemonID)
+					Program.changeScreenView(PE_SCREEN)
+				end,
+			}
+			pigButton:alignToBox(row.box)
+			local originalDraw = label.draw
+			local labelDraw = function(button, shadowcolor)
+				local tracked = Tracker.Data.allPokemon[pokemonID] or {}
+				local trainers, wilds = tracked.eT or 0, tracked.eW or 0
+				local seen = Resources.NotebookPokemonSeen.LabelSeen
+				if trainers > 0 and wilds > 0 then
+					seen = string.format("%s: %s(T) + %s(W)", seen, trainers, wilds)
+				else
+					seen = string.format("%s: %s", seen, trainers + wilds)
+				end
+				local textX, textY = button.box[1], button.box[2] + 2
+				local textWidth = pigButton.box[1] - textX - NOTEBOOK_PIGGY.TEXT_GAP
+				local fill = Theme.COLORS[NotebookPokemonSeen.Colors.boxFill]
+				Drawing.drawTransparentTextbox(textX, textY, Utils.shortenText(button:getCustomText(), textWidth, true),
+					Theme.COLORS[button.textColor], fill, shadowcolor)
+				Drawing.drawTransparentTextbox(textX, textY + Constants.SCREEN.LINESPACING, Utils.shortenText(seen, textWidth, true),
+					Theme.COLORS[NotebookPokemonSeen.Colors.text], fill, shadowcolor)
+			end
+			label.draw = labelDraw
+			table.insert(row.buttonList, pigButton)
+			table.insert(notebookRows, { row = row, button = pigButton, label = label, originalDraw = originalDraw, labelDraw = labelDraw })
+		end
+	end
+
+	local function installNotebookButtons()
+		if notebookOriginalBuild or not NotebookPokemonSeen then return end
+		notebookOriginalBuild = NotebookPokemonSeen.buildScreen
+		notebookOriginalInput = NotebookPokemonSeen.checkInput
+		notebookBuild = function(navFilter)
+			local result = notebookOriginalBuild(navFilter)
+			decorateNotebookRows()
+			return result
+		end
+		notebookInput = function(mouseX, mouseY)
+			for _, entry in ipairs(notebookRows) do
+				local button = entry.button
+				local box = button.box
+				if button:isVisible() and Input.isMouseInArea(mouseX, mouseY, box[1], box[2], box[3], box[4]) then
+					Input.checkButtonsClicked(mouseX, mouseY, { button })
+					return
+				end
+			end
+			notebookOriginalInput(mouseX, mouseY)
+		end
+		NotebookPokemonSeen.buildScreen = notebookBuild
+		NotebookPokemonSeen.checkInput = notebookInput
+		decorateNotebookRows()
+	end
+
+	local function removeNotebookButtons()
+		if not notebookOriginalBuild then return end
+		if NotebookPokemonSeen.buildScreen == notebookBuild then NotebookPokemonSeen.buildScreen = notebookOriginalBuild end
+		if NotebookPokemonSeen.checkInput == notebookInput then NotebookPokemonSeen.checkInput = notebookOriginalInput end
+		for _, entry in ipairs(notebookRows) do
+			if entry.label.draw == entry.labelDraw then entry.label.draw = entry.originalDraw end
+			for index = #entry.row.buttonList, 1, -1 do
+				if entry.row.buttonList[index] == entry.button then table.remove(entry.row.buttonList, index) end
+			end
+		end
+		if PE_SCREEN.previousScreen == NotebookPokemonSeen then
+			if Program.currentScreen == PE_SCREEN or Program.currentScreen == BattleTimelineScreen then
+				Program.changeScreenView(NotebookPokemonSeen)
+			end
+			PE_SCREEN.previousScreen = nil
+		end
+		notebookRows = {}
+		notebookOriginalBuild, notebookOriginalInput = nil, nil
+		notebookBuild, notebookInput = nil, nil
+	end
 
 	local extensionMoveSearchBox = {
 		Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 120, -- x
@@ -2236,6 +2341,7 @@ local function EncounterDetailsExtension()
 		TrackerScreen.Buttons.InvisibleEncounterDetails = invisibleTextOverlayBtn
 		SingleExtensionScreen.Buttons.EncounterDetails = extensionPagePigBtn
 		SingleExtensionScreen.Buttons.MoveSearchButton = extensionPageMoveSearchButton
+		installNotebookButtons()
 	end
 
 	-- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
@@ -2244,6 +2350,7 @@ local function EncounterDetailsExtension()
 			return
 		end
 		finishBattleLog()
+		removeNotebookButtons()
 
 		TrackerScreen.Buttons.EncounterDetails = nil
 		TrackerScreen.Buttons.InvisibleEncounterDetails = nil
