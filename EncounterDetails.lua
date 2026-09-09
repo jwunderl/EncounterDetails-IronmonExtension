@@ -127,7 +127,7 @@ local function EncounterDetailsExtension()
 		[333] = true,
 		[350] = true,
 	}
-	local EVENT_KIND = { TICK = 1, BLOCKED = 2, RECOVERY = 3, EFFECT = 4 }
+	local EVENT_KIND = { TICK = 1, BLOCKED = 2, RECOVERY = 3, EFFECT = 4, ARRIVAL = 5 }
 	local EVENT_REASON = {
 		POISON = 1,
 		TOXIC = 2,
@@ -151,6 +151,7 @@ local function EncounterDetailsExtension()
 		LEECH_SEED = 20,
 		RECOIL = 21,
 		LEECH_OOZE = 22,
+		SEND_OUT = 23,
 	}
 	local EVENT_LABELS = {
 		[EVENT_REASON.POISON] = "Poison damage",
@@ -175,6 +176,7 @@ local function EncounterDetailsExtension()
 		[EVENT_REASON.LEECH_SEED] = "Leech Seed drain",
 		[EVENT_REASON.RECOIL] = "Recoil damage",
 		[EVENT_REASON.LEECH_OOZE] = "Leech Seed: Liquid Ooze",
+		[EVENT_REASON.SEND_OUT] = "Sent out",
 	}
 	local MESSAGE_EVENTS = {
 		[42] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.POISON },
@@ -692,6 +694,16 @@ local function EncounterDetailsExtension()
 		if current == nil or current.id == nil or action == nil or state == nil then
 			return
 		end
+		if action.faintedStates then
+			local snapshot = {}
+			for key, value in pairs(state) do snapshot[key] = value end
+			for prefix, faintedState in pairs(action.faintedStates) do
+				for key, value in pairs(faintedState) do
+					if key:sub(1, #prefix) == prefix then snapshot[key] = value end
+				end
+			end
+			state = snapshot
+		end
 
 		local columns = {
 			"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid",
@@ -744,8 +756,36 @@ local function EncounterDetailsExtension()
 
 		local nextState = mergeUnknownState(getBattleState(), current.latestState)
 		local changed = not battleStatesEqual(nextState, current.latestState)
-		current.latestState = nextState
 		local action = current.pendingAction or current.initialAction
+		local arrivals = {}
+		for index, prefix in ipairs(BATTLE_STATE_PREFIXES) do
+			local previous = current.latestState
+			if previous and previous[prefix .. "id"] ~= 0 and previous[prefix .. "hp"] == 0 then
+				current.awaitingArrival[prefix] = true
+			end
+			if current.awaitingArrival[prefix] and nextState[prefix .. "id"] ~= 0 and nextState[prefix .. "hp"] > 0 then
+				current.awaitingArrival[prefix] = nil
+				table.insert(arrivals, { index = index - 1, prefix = prefix })
+			end
+			if previous and previous[prefix .. "id"] ~= 0 and previous[prefix .. "hp"] == 0
+				and (nextState[prefix .. "id"] ~= previous[prefix .. "id"] or nextState[prefix .. "hp"] > 0) then
+				action.faintedStates = action.faintedStates or {}
+				action.faintedStates[prefix] = action.faintedStates[prefix] or previous
+			end
+		end
+		current.latestState = nextState
+		for _, arrival in ipairs(arrivals) do
+			local pokemonID, level = nextState[arrival.prefix .. "id"], nextState[arrival.prefix .. "level"]
+			local event = {
+				sequence = current.nextSequence, turn = action.turn, actionindex = -1,
+				actorindex = arrival.index, actorpokemonid = pokemonID, actorlevel = level,
+				subjectindex = arrival.index, subjectpokemonid = pokemonID, subjectlevel = level,
+				actiontype = -1, moveid = 0, iscritical = 0,
+				eventkind = EVENT_KIND.ARRIVAL, eventreason = EVENT_REASON.SEND_OUT,
+			}
+			current.nextSequence = current.nextSequence + 1
+			saveTimelineEvent(event, nextState)
+		end
 		if action.sealed then return end
 		if changed then saveTimelineEvent(action, current.latestState) end
 		if action.waitForHP then
@@ -792,6 +832,7 @@ local function EncounterDetailsExtension()
 			waitingForCritMessage = false,
 			latestState = nil,
 			recentHPUpdates = {},
+			awaitingArrival = {},
 			nextSequence = 1,
 			initialAction = {
 				sequence = 0,
@@ -1742,7 +1783,8 @@ local function EncounterDetailsExtension()
 
 	local function pokemonLevelLabel(label, pokemonID, level, maxWidth)
 		local suffix = level and level >= 1 and level <= MAX_LEVEL and string.format(" lvl %d", level) or " lvl ?"
-		return fitTimelineText(label .. " " .. getPokemonName(pokemonID), maxWidth - Utils.calcWordPixelLength(suffix) - 1) .. suffix
+		return fitTimelineText(label .. " " .. getPokemonName(pokemonID),
+			maxWidth - Utils.calcWordPixelLength(suffix) - 1) .. suffix
 	end
 
 	local function drawHPBar(x, y, barPixels, canvas)
@@ -1785,6 +1827,7 @@ local function EncounterDetailsExtension()
 
 	local function getPokemonStateText(entry, previousEntry, prefix)
 		local parts = {}
+		if entry[prefix .. "hp"] == 0 then table.insert(parts, "Fainted") end
 		for _, stageKey in ipairs(STAT_STAGE_KEYS) do
 			local stage = entry[prefix .. stageKey .. "stage"]
 			if stage ~= nil and stage ~= STAT_STAGE_UNKNOWN and stage ~= 0 then
@@ -1937,15 +1980,16 @@ local function EncounterDetailsExtension()
 	local function findEncounterStart(entries, pokemonID)
 		if not PokemonData.isValid(pokemonID) then return 1 end
 		local function isPresent(entry)
-			return (entry.otherleftid == pokemonID and entry.otherlefthp ~= 0)
-				or (entry.otherrightid == pokemonID and entry.otherrighthp ~= 0)
+			return entry.otherleftid == pokemonID or entry.otherrightid == pokemonID
 		end
 		for index, entry in ipairs(entries) do
 			if isPresent(entry) then
 				if entry.sequence == 0 then return index end
 				local startIndex = index
 				local isAction = entry.actiontype >= 0 or entry.eventkind == EVENT_KIND.BLOCKED
-				if not isAction or entry.actorindex % 2 ~= 1 or entry.actorpokemonid ~= pokemonID then
+				local fainted = (entry.otherleftid == pokemonID and entry.otherlefthp == 0)
+					or (entry.otherrightid == pokemonID and entry.otherrighthp == 0)
+				if not fainted and (not isAction or entry.actorindex % 2 ~= 1 or entry.actorpokemonid ~= pokemonID) then
 					for nextIndex = index + 1, #entries do
 						local nextEntry = entries[nextIndex]
 						if nextEntry.actiontype >= 0 or nextEntry.eventkind == EVENT_KIND.BLOCKED then
@@ -1955,6 +1999,7 @@ local function EncounterDetailsExtension()
 						if not isPresent(nextEntry) then break end
 					end
 				end
+				if startIndex == index and entry.eventkind == EVENT_KIND.ARRIVAL then return index end
 				local turn = entries[startIndex].turn
 				while startIndex > 1 and entries[startIndex - 1].turn == turn do
 					startIndex = startIndex - 1
@@ -2024,6 +2069,8 @@ local function EncounterDetailsExtension()
 				local heading = string.format("Turn %s, action %s", entry.turn, entry.actionindex + 1)
 				if entry.eventkind == EVENT_KIND.TICK then
 					heading = string.format("Turn %s, end turn", entry.turn)
+				elseif entry.eventkind == EVENT_KIND.ARRIVAL then
+					heading = string.format("Turn %d, send-out", entry.turn)
 				elseif entry.eventkind == EVENT_KIND.RECOVERY or entry.actionindex < 0 then
 					heading = string.format("Turn %s", entry.turn)
 				end
@@ -2121,7 +2168,7 @@ local function EncounterDetailsExtension()
 				if pokemonID ~= 0 then
 					local text = pokemonLevelLabel(row.label, pokemonID, entry[row.prefix .. "level"], canvas.width - 8)
 					Drawing.drawText(canvas.x + 4, y, text, canvas.text, canvas
-					.shadow)
+						.shadow)
 					for _, line in ipairs(row.conditionLines) do
 						y = y + Constants.SCREEN.LINESPACING
 						Drawing.drawText(canvas.x + 4, y, line, canvas.text, canvas.shadow)
@@ -2871,8 +2918,10 @@ local function EncounterDetailsExtension()
 			binding.nameButton.getCustomText = binding.originalNameText
 		end
 		if binding.nameButton.box == binding.nameBox then binding.nameButton.box = binding.originalNameBox end
-		if binding.nameButton.clickableArea == binding.nameBox then binding.nameButton.clickableArea = binding
-			.originalNameArea end
+		if binding.nameButton.clickableArea == binding.nameBox then
+			binding.nameButton.clickableArea = binding
+				.originalNameArea
+		end
 		if notes.Buttons.EncounterDetails == binding.pigButton then
 			notes.Buttons.EncounterDetails = binding
 				.previousButton
