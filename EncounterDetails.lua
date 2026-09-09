@@ -87,13 +87,44 @@ local function EncounterDetailsExtension()
 	local BATTLE_COMM_MESSAGE_DISPLAY_OFFSET = 7
 	local HITMARKER_ATTACKSTRING_PRINTED = 0x400
 	local HITMARKER_UNABLE_TO_USE_MOVE = 0x80000
+	local MOVE_RESULT_NO_EFFECT = 0x29
+	local HIT_SUMMARY = {
+		MESSAGE_ID = 34,
+		BUFFER_BEGIN = 0xFD,
+		BUFFER_NUMBER = 1,
+		BUFFER_END = 0xFF,
+		MAX_HITS = 6,
+		UNKNOWN_CRITS = -1,
+	}
+	local MULTI_HIT_MOVES = {
+		[3] = true, [4] = true, [24] = true, [31] = true, [41] = true, [42] = true,
+		[131] = true, [140] = true, [154] = true, [155] = true, [167] = true,
+		[198] = true, [251] = true, [292] = true, [331] = true, [333] = true, [350] = true,
+	}
 	local EVENT_KIND = { TICK = 1, BLOCKED = 2, RECOVERY = 3, EFFECT = 4 }
 	local EVENT_REASON = {
-		POISON = 1, TOXIC = 2, BURN = 3, SAND = 4, HAIL = 5,
-		SLEEP = 6, FREEZE = 7, PARALYSIS = 8, WAKE = 9, THAW = 10,
-		FLINCH = 11, CONFUSION = 12, RECHARGE = 13, ATTRACTION = 14,
-		TRAPPING = 15, CURSE = 16, NIGHTMARE = 17, LEFTOVERS = 18, INGRAIN = 19,
-		LEECH_SEED = 20, RECOIL = 21, LEECH_OOZE = 22,
+		POISON = 1,
+		TOXIC = 2,
+		BURN = 3,
+		SAND = 4,
+		HAIL = 5,
+		SLEEP = 6,
+		FREEZE = 7,
+		PARALYSIS = 8,
+		WAKE = 9,
+		THAW = 10,
+		FLINCH = 11,
+		CONFUSION = 12,
+		RECHARGE = 13,
+		ATTRACTION = 14,
+		TRAPPING = 15,
+		CURSE = 16,
+		NIGHTMARE = 17,
+		LEFTOVERS = 18,
+		INGRAIN = 19,
+		LEECH_SEED = 20,
+		RECOIL = 21,
+		LEECH_OOZE = 22,
 	}
 	local EVENT_LABELS = {
 		[EVENT_REASON.POISON] = "Poison damage",
@@ -146,10 +177,17 @@ local function EncounterDetailsExtension()
 		[313] = { kind = EVENT_KIND.TICK, reason = EVENT_REASON.LEECH_OOZE, hpUpdatesBeforeMessage = 2, leechTable = true },
 	}
 	local BATTLE_SCRIPT = {
-		ROM_START = 0x08000000, ROM_END = 0x0A000000,
-		PRINT = 0x10, PRINT_TABLE = 0x13, DATA_HP = 0x0C,
-		PRINT_SIZE = 3, PRINT_TABLE_SIZE = 5, TABLE_SELECTOR_OFFSET = 5,
-		TARGET = 0, ATTACKER = 1, RECENT_HP_UPDATES = 2,
+		ROM_START = 0x08000000,
+		ROM_END = 0x0A000000,
+		PRINT = 0x10,
+		PRINT_TABLE = 0x13,
+		DATA_HP = 0x0C,
+		PRINT_SIZE = 3,
+		PRINT_TABLE_SIZE = 5,
+		TABLE_SELECTOR_OFFSET = 5,
+		TARGET = 0,
+		ATTACKER = 1,
+		RECENT_HP_UPDATES = 2,
 		LEECH_MESSAGES = { 104, 105, 27, 106, 313 },
 	}
 	local BATTLE_TYPE_GHOST_BIT = 15
@@ -269,6 +307,8 @@ local function EncounterDetailsExtension()
 			"actiontype INTEGER",
 			"moveid INTEGER",
 			"iscritical INTEGER",
+			"hitcount INTEGER DEFAULT 0",
+			"critcount INTEGER DEFAULT 0",
 			"weather INTEGER",
 			"eventkind INTEGER",
 			"eventreason INTEGER",
@@ -298,6 +338,15 @@ local function EncounterDetailsExtension()
 		SQL.writecommand(encounterBattleTableCreateCommand)
 		SQL.writecommand(encounterBattleIndexCommand)
 		SQL.writecommand(timelineTableCreateCommand)
+		local timelineFields = {}
+		for _, column in ipairs(reformatSqlReadResult(SQL.readcommand("PRAGMA table_info(" .. self.timelineTableKey .. ")"))) do
+			timelineFields[column.name] = true
+		end
+		for _, field in ipairs({ "hitcount", "critcount" }) do
+			if not timelineFields[field] then
+				SQL.writecommand("ALTER TABLE " .. self.timelineTableKey .. " ADD COLUMN " .. field .. " INTEGER DEFAULT 0")
+			end
+		end
 
 		TrackerAPI.saveExtensionSetting(self.name, "savedHash", GameSettings.getRomHash())
 	end
@@ -601,11 +650,12 @@ local function EncounterDetailsExtension()
 
 		local columns = {
 			"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid",
-			"actiontype", "moveid", "iscritical", "weather", "eventkind", "eventreason", "subjectindex", "subjectpokemonid",
+			"actiontype", "moveid", "iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason", "subjectindex",
+			"subjectpokemonid",
 		}
 		local values = {
 			current.id, action.sequence, action.turn, action.actionindex, action.actorindex,
-			action.actorpokemonid, action.actiontype, action.moveid, action.iscritical or 0, state.weather,
+			action.actorpokemonid, action.actiontype, action.moveid, action.iscritical or 0, action.hitcount or 0, action.critcount or 0, state.weather,
 			action.eventkind or 0, action.eventreason or 0, action.subjectindex or action.actorindex,
 			action.subjectpokemonid or action.actorpokemonid,
 		}
@@ -675,7 +725,8 @@ local function EncounterDetailsExtension()
 		local subject = Memory.readbyte(address)
 		if subject >= Battle.numBattlers or getActivePokemonID(subject) == 0 then return end
 		current.hpUpdate = {
-			pointer = pointer, subject = subject,
+			pointer = pointer,
+			subject = subject,
 			owner = current.pendingAction or current.initialAction,
 			before = mergeUnknownState(getBattleState(), current.latestState),
 		}
@@ -825,11 +876,35 @@ local function EncounterDetailsExtension()
 		elseif printCommand >= BATTLE_SCRIPT.ROM_START and Memory.readbyte(printCommand) == BATTLE_SCRIPT.PRINT then
 			messageID = Memory.readword(printCommand + 1)
 		end
+		if messageID == HIT_SUMMARY.MESSAGE_ID then
+			local action = current.pendingAction
+			local buffer = GameSettings.gBattleTextBuff1
+			if not action or action.actiontype ~= 0 or not buffer
+				or Memory.readbyte(GameSettings.gCurrentTurnActionNumber) ~= action.actionindex
+				or Memory.readbyte(GameSettings.gBattlerAttacker) ~= action.actorindex then return end
+			if Memory.readbyte(buffer) ~= HIT_SUMMARY.BUFFER_BEGIN
+				or Memory.readbyte(buffer + 1) ~= HIT_SUMMARY.BUFFER_NUMBER
+				or Memory.readbyte(buffer + 2) ~= 1 or Memory.readbyte(buffer + 3) ~= 1
+				or Memory.readbyte(buffer + 5) ~= HIT_SUMMARY.BUFFER_END then return end
+			local hitCount = Memory.readbyte(buffer + 4)
+			if hitCount < 1 or hitCount > HIT_SUMMARY.MAX_HITS then return end
+			if action.hitcount ~= hitCount then
+				action.hitcount = hitCount
+				action.critcount = HIT_SUMMARY.UNKNOWN_CRITS
+				saveTimelineEvent(action, current.latestState)
+			end
+			return
+		end
 		local definition = MESSAGE_EVENTS[messageID]
-		if not definition then current.messageKey = nil return end
+		if not definition then
+			current.messageKey = nil
+			return
+		end
 		if definition.leechTable then
 			if not tablePointer or tablePointer < BATTLE_SCRIPT.ROM_START
-				or tablePointer + #BATTLE_SCRIPT.LEECH_MESSAGES * 2 > BATTLE_SCRIPT.ROM_END then return end
+				or tablePointer + #BATTLE_SCRIPT.LEECH_MESSAGES * 2 > BATTLE_SCRIPT.ROM_END then
+				return
+			end
 			for index, expected in ipairs(BATTLE_SCRIPT.LEECH_MESSAGES) do
 				if Memory.readword(tablePointer + (index - 1) * 2) ~= expected then return end
 			end
@@ -842,10 +917,13 @@ local function EncounterDetailsExtension()
 		if current.messageKey == messageKey then return end
 		current.messageKey = messageKey
 		if definition.reason == EVENT_REASON.SLEEP
-			and Utils.bit_and(Memory.readdword(GameSettings.gHitMarker), HITMARKER_UNABLE_TO_USE_MOVE) == 0 then return end
+			and Utils.bit_and(Memory.readdword(GameSettings.gHitMarker), HITMARKER_UNABLE_TO_USE_MOVE) == 0 then
+			return
+		end
 		if definition.reason == EVENT_REASON.CONFUSION and readConfused(subject) ~= 1 then return end
 		local reason = definition.reason
-		if reason == EVENT_REASON.POISON and readMajorStatus(subject) == MAJOR_STATUS.TOXIC then reason = EVENT_REASON.TOXIC end
+		if reason == EVENT_REASON.POISON and readMajorStatus(subject) == MAJOR_STATUS.TOXIC then reason = EVENT_REASON
+			.TOXIC end
 		local pending = current.pendingAction
 		local actor = subject
 		if definition.hpUpdatesBeforeMessage == 2 then
@@ -865,15 +943,21 @@ local function EncounterDetailsExtension()
 		local reuseAction = (definition.kind == EVENT_KIND.BLOCKED or definition.kind == EVENT_KIND.RECOVERY)
 			and pending and not pending.eventkind
 			and pending.actiontype == 0 and pending.moveid == 0 and pending.actorindex == subject
-		local waitForHP = not definition.hpUpdatesBeforeMessage and (definition.kind == EVENT_KIND.TICK or definition.waitForHP == true)
+		local waitForHP = not definition.hpUpdatesBeforeMessage and
+		(definition.kind == EVENT_KIND.TICK or definition.waitForHP == true)
 		local event = {
 			sequence = reuseAction and pending.sequence or current.nextSequence,
 			turn = pending and pending.turn or math.max(0, Battle.turnCount + 1),
 			actionindex = definition.kind == EVENT_KIND.BLOCKED and pending and pending.actionindex or -1,
-			actorindex = actor, actorpokemonid = getActivePokemonID(actor),
-			actiontype = -1, moveid = 0, iscritical = 0,
-			eventkind = definition.kind, eventreason = reason,
-			subjectindex = subject, subjectpokemonid = getActivePokemonID(subject),
+			actorindex = actor,
+			actorpokemonid = getActivePokemonID(actor),
+			actiontype = -1,
+			moveid = 0,
+			iscritical = 0,
+			eventkind = definition.kind,
+			eventreason = reason,
+			subjectindex = subject,
+			subjectpokemonid = getActivePokemonID(subject),
 			waitForHP = waitForHP,
 			sealed = not waitForHP,
 		}
@@ -909,18 +993,25 @@ local function EncounterDetailsExtension()
 
 		local opcode = Memory.readbyte(scriptAddress)
 		if opcode == CRIT_MESSAGE_OPCODE then
-			current.waitingForCritMessage = true
+			current.waitingForCritMessage = scriptAddress
 			return
 		end
 		if not current.waitingForCritMessage then
 			return
 		end
+		local critPointer = current.waitingForCritMessage
 		current.waitingForCritMessage = false
 
 		local messageDisplayed = Memory.readbyte(GameSettings.gBattleCommunication
 			+ BATTLE_COMM_MESSAGE_DISPLAY_OFFSET)
-		if opcode == WAIT_MESSAGE_OPCODE and messageDisplayed == 1 then
-			action.iscritical = 1
+		local moveFlags = GameSettings.gMoveResultFlags and Memory.readbyte(GameSettings.gMoveResultFlags) or 0
+		if opcode == WAIT_MESSAGE_OPCODE and scriptAddress == critPointer + 1
+			and Utils.bit_and(moveFlags, MOVE_RESULT_NO_EFFECT) == 0 then
+			action.hitcount = (action.hitcount or 0) + 1
+			if messageDisplayed == 1 and Memory.readdword(GameSettings.gBattleControllerExecFlags) ~= 0 then
+				if action.critcount ~= HIT_SUMMARY.UNKNOWN_CRITS then action.critcount = (action.critcount or 0) + 1 end
+				action.iscritical = 1
+			end
 			saveTimelineEvent(action, current.latestState)
 		end
 	end
@@ -1540,7 +1631,7 @@ local function EncounterDetailsExtension()
 	local TIMELINE_HP_BAR_HEIGHT = 5
 	local TIMELINE_NUMBER_FIELDS = {
 		"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid", "actiontype", "moveid",
-		"iscritical", "weather", "eventkind", "eventreason", "subjectindex", "subjectpokemonid",
+		"iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason", "subjectindex", "subjectpokemonid",
 	}
 	for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
 		for _, field in ipairs({ "id", "hp", "status", "confused" }) do
@@ -1759,6 +1850,13 @@ local function EncounterDetailsExtension()
 			Drawing.drawText(canvas.x + 4, y, "No battle actions recorded.", canvas.text, canvas.shadow)
 		else
 			local previousEntry = BT_SCREEN.entries[BT_SCREEN.currentIndex - 1]
+			local isDoubleBattle = entry.ownrightid ~= 0 or entry.otherrightid ~= 0
+			local hitText
+			if entry.actiontype == 0 and MULTI_HIT_MOVES[entry.moveid] and entry.hitcount > 0 then
+				local crits = entry.critcount == HIT_SUMMARY.UNKNOWN_CRITS and "crits ?"
+					or string.format("%d %s", entry.critcount, entry.critcount == 1 and "crit" or "crits")
+				hitText = string.format("%d %s, %s", entry.hitcount, entry.hitcount == 1 and "hit" or "hits", crits)
+			end
 			if entry.sequence == 0 then
 				Drawing.drawText(canvas.x + 4, y, "Battle start", canvas.text, canvas.shadow)
 			else
@@ -1767,6 +1865,11 @@ local function EncounterDetailsExtension()
 					heading = string.format("Turn %s, end turn", entry.turn)
 				elseif entry.eventkind == EVENT_KIND.RECOVERY or entry.actionindex < 0 then
 					heading = string.format("Turn %s", entry.turn)
+				end
+				if hitText and isDoubleBattle then
+					heading = string.format("T%d A%d | %s", entry.turn, entry.actionindex + 1, hitText)
+				elseif isDoubleBattle and entry.iscritical == 1 then
+					heading = string.format("T%d A%d | critical hit", entry.turn, entry.actionindex + 1)
 				end
 				Drawing.drawText(canvas.x + 4, y,
 					fitTimelineText(heading, canvas.width - 8), canvas.text, canvas.shadow)
@@ -1799,7 +1902,11 @@ local function EncounterDetailsExtension()
 				actionText = EVENT_LABELS[entry.eventreason] or ("Action: " .. actionText)
 				Drawing.drawText(canvas.x + 4, y, fitTimelineText(actionText, canvas.width - 8),
 					Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
-				if entry.iscritical == 1 then
+				if hitText and not isDoubleBattle then
+					y = y + Constants.SCREEN.LINESPACING
+					Drawing.drawText(canvas.x + 4, y, fitTimelineText(hitText, canvas.width - 8),
+						Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
+				elseif not hitText and not isDoubleBattle and entry.iscritical == 1 then
 					y = y + Constants.SCREEN.LINESPACING
 					Drawing.drawText(canvas.x + 4, y, "critical hit",
 						Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
@@ -1815,7 +1922,6 @@ local function EncounterDetailsExtension()
 			Drawing.drawText(canvas.x + 4, y, fitTimelineText(stateHeading, canvas.width - 8),
 				Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
 			y = y + Constants.SCREEN.LINESPACING
-			local isDoubleBattle = entry.ownrightid ~= 0 or entry.otherrightid ~= 0
 			local stateRows = {
 				{ label = Utils.inlineIf(entry.ownrightid ~= 0, "P1", "Player"), prefix = "ownleft" },
 				{ label = Utils.inlineIf(entry.otherrightid ~= 0, "F1", "Foe"),  prefix = "otherleft" },
@@ -2571,10 +2677,14 @@ local function EncounterDetailsExtension()
 		local binding = notebookNoteBinding
 		local notes = NotebookPokemonNoteView
 		if binding.noteButton.getText == binding.getText then binding.noteButton.getText = binding.originalGetText end
-		if binding.noteButton.clickableArea == binding.clickableArea then binding.noteButton.clickableArea = binding
-			.originalArea end
-		if notes.Buttons.EncounterDetails == binding.pigButton then notes.Buttons.EncounterDetails = binding
-			.previousButton end
+		if binding.noteButton.clickableArea == binding.clickableArea then
+			binding.noteButton.clickableArea = binding
+				.originalArea
+		end
+		if notes.Buttons.EncounterDetails == binding.pigButton then
+			notes.Buttons.EncounterDetails = binding
+				.previousButton
+		end
 		if PE_SCREEN.previousScreen == notes then
 			if Program.currentScreen == PE_SCREEN or Program.currentScreen == BattleTimelineScreen then
 				Program.changeScreenView(notes)
