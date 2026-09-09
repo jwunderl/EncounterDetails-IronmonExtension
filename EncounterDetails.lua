@@ -97,9 +97,23 @@ local function EncounterDetailsExtension()
 		UNKNOWN_CRITS = -1,
 	}
 	local MULTI_HIT_MOVES = {
-		[3] = true, [4] = true, [24] = true, [31] = true, [41] = true, [42] = true,
-		[131] = true, [140] = true, [154] = true, [155] = true, [167] = true,
-		[198] = true, [251] = true, [292] = true, [331] = true, [333] = true, [350] = true,
+		[3] = true,
+		[4] = true,
+		[24] = true,
+		[31] = true,
+		[41] = true,
+		[42] = true,
+		[131] = true,
+		[140] = true,
+		[154] = true,
+		[155] = true,
+		[167] = true,
+		[198] = true,
+		[251] = true,
+		[292] = true,
+		[331] = true,
+		[333] = true,
+		[350] = true,
 	}
 	local EVENT_KIND = { TICK = 1, BLOCKED = 2, RECOVERY = 3, EFFECT = 4 }
 	local EVENT_REASON = {
@@ -344,7 +358,8 @@ local function EncounterDetailsExtension()
 		end
 		for _, field in ipairs({ "hitcount", "critcount" }) do
 			if not timelineFields[field] then
-				SQL.writecommand("ALTER TABLE " .. self.timelineTableKey .. " ADD COLUMN " .. field .. " INTEGER DEFAULT 0")
+				SQL.writecommand("ALTER TABLE " ..
+				self.timelineTableKey .. " ADD COLUMN " .. field .. " INTEGER DEFAULT 0")
 			end
 		end
 
@@ -650,12 +665,14 @@ local function EncounterDetailsExtension()
 
 		local columns = {
 			"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid",
-			"actiontype", "moveid", "iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason", "subjectindex",
+			"actiontype", "moveid", "iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason",
+			"subjectindex",
 			"subjectpokemonid",
 		}
 		local values = {
 			current.id, action.sequence, action.turn, action.actionindex, action.actorindex,
-			action.actorpokemonid, action.actiontype, action.moveid, action.iscritical or 0, action.hitcount or 0, action.critcount or 0, state.weather,
+			action.actorpokemonid, action.actiontype, action.moveid, action.iscritical or 0, action.hitcount or 0, action
+		.critcount or 0, state.weather,
 			action.eventkind or 0, action.eventreason or 0, action.subjectindex or action.actorindex,
 			action.subjectpokemonid or action.actorpokemonid,
 		}
@@ -881,11 +898,15 @@ local function EncounterDetailsExtension()
 			local buffer = GameSettings.gBattleTextBuff1
 			if not action or action.actiontype ~= 0 or not buffer
 				or Memory.readbyte(GameSettings.gCurrentTurnActionNumber) ~= action.actionindex
-				or Memory.readbyte(GameSettings.gBattlerAttacker) ~= action.actorindex then return end
+				or Memory.readbyte(GameSettings.gBattlerAttacker) ~= action.actorindex then
+				return
+			end
 			if Memory.readbyte(buffer) ~= HIT_SUMMARY.BUFFER_BEGIN
 				or Memory.readbyte(buffer + 1) ~= HIT_SUMMARY.BUFFER_NUMBER
 				or Memory.readbyte(buffer + 2) ~= 1 or Memory.readbyte(buffer + 3) ~= 1
-				or Memory.readbyte(buffer + 5) ~= HIT_SUMMARY.BUFFER_END then return end
+				or Memory.readbyte(buffer + 5) ~= HIT_SUMMARY.BUFFER_END then
+				return
+			end
 			local hitCount = Memory.readbyte(buffer + 4)
 			if hitCount < 1 or hitCount > HIT_SUMMARY.MAX_HITS then return end
 			if action.hitcount ~= hitCount then
@@ -922,8 +943,10 @@ local function EncounterDetailsExtension()
 		end
 		if definition.reason == EVENT_REASON.CONFUSION and readConfused(subject) ~= 1 then return end
 		local reason = definition.reason
-		if reason == EVENT_REASON.POISON and readMajorStatus(subject) == MAJOR_STATUS.TOXIC then reason = EVENT_REASON
-			.TOXIC end
+		if reason == EVENT_REASON.POISON and readMajorStatus(subject) == MAJOR_STATUS.TOXIC then
+			reason = EVENT_REASON
+				.TOXIC
+		end
 		local pending = current.pendingAction
 		local actor = subject
 		if definition.hpUpdatesBeforeMessage == 2 then
@@ -944,7 +967,7 @@ local function EncounterDetailsExtension()
 			and pending and not pending.eventkind
 			and pending.actiontype == 0 and pending.moveid == 0 and pending.actorindex == subject
 		local waitForHP = not definition.hpUpdatesBeforeMessage and
-		(definition.kind == EVENT_KIND.TICK or definition.waitForHP == true)
+			(definition.kind == EVENT_KIND.TICK or definition.waitForHP == true)
 		local event = {
 			sequence = reuseAction and pending.sequence or current.nextSequence,
 			turn = pending and pending.turn or math.max(0, Battle.turnCount + 1),
@@ -1296,7 +1319,8 @@ local function EncounterDetailsExtension()
 				return PE_SCREEN.examiningEncounter ~= nil and PE_SCREEN.examiningBattleID ~= nil
 			end,
 			onClick = function()
-				BattleTimelineScreen.open(PE_SCREEN.examiningBattleID)
+				BattleTimelineScreen.open(PE_SCREEN.examiningBattleID,
+					PE_SCREEN.examiningEncounter and PE_SCREEN.examiningEncounter["pokemonid"])
 			end
 		},
 		Back = Drawing.createUIElementBackButton(
@@ -1807,14 +1831,45 @@ local function EncounterDetailsExtension()
 		end
 	end
 
-	function BattleTimelineScreen.open(battleID)
+	local function findEncounterStart(entries, pokemonID)
+		if not PokemonData.isValid(pokemonID) then return 1 end
+		local function isPresent(entry)
+			return (entry.otherleftid == pokemonID and entry.otherlefthp ~= 0)
+				or (entry.otherrightid == pokemonID and entry.otherrighthp ~= 0)
+		end
+		for index, entry in ipairs(entries) do
+			if isPresent(entry) then
+				if entry.sequence == 0 then return index end
+				local startIndex = index
+				local isAction = entry.actiontype >= 0 or entry.eventkind == EVENT_KIND.BLOCKED
+				if not isAction or entry.actorindex % 2 ~= 1 or entry.actorpokemonid ~= pokemonID then
+					for nextIndex = index + 1, #entries do
+						local nextEntry = entries[nextIndex]
+						if nextEntry.actiontype >= 0 or nextEntry.eventkind == EVENT_KIND.BLOCKED then
+							startIndex = nextIndex
+							break
+						end
+						if not isPresent(nextEntry) then break end
+					end
+				end
+				local turn = entries[startIndex].turn
+				while startIndex > 1 and entries[startIndex - 1].turn == turn do
+					startIndex = startIndex - 1
+				end
+				return startIndex
+			end
+		end
+		return 1
+	end
+
+	function BattleTimelineScreen.open(battleID, pokemonID)
 		BT_SCREEN.entries = getBattleTimeline(battleID)
 		for _, entry in ipairs(BT_SCREEN.entries) do
 			for _, field in ipairs(TIMELINE_NUMBER_FIELDS) do
 				entry[field] = tonumber(entry[field]) or 0
 			end
 		end
-		BT_SCREEN.currentIndex = 1
+		BT_SCREEN.currentIndex = findEncounterStart(BT_SCREEN.entries, tonumber(pokemonID))
 		Program.changeScreenView(BattleTimelineScreen)
 	end
 
@@ -2630,17 +2685,20 @@ local function EncounterDetailsExtension()
 		if notebookNoteBinding or not NotebookPokemonNoteView then return end
 		local notes = NotebookPokemonNoteView
 		local noteButton = notes.Buttons.Note
+		local nameButton = notes.Buttons.PokemonName
 		local backArea = notes.Buttons.Back.clickableArea or notes.Buttons.Back.box
 		local originalGetText = noteButton.getText
-		local originalArea = noteButton.clickableArea
+		local originalNameText = nameButton.getCustomText
+		local originalNameBox = nameButton.box
+		local originalNameArea = nameButton.clickableArea
 		local pigButton = {
 			type = Constants.ButtonTypes.PIXELIMAGE,
 			image = piggyPixelImage,
 			iconColors = pigColors,
-			textColor = notes.Colors.bottomText,
-			location = "bottom",
+			textColor = notes.Colors.text,
+			location = "top",
 			box = {
-				backArea[1] - NOTEBOOK_PIGGY.WIDTH - NOTEBOOK_PIGGY.TEXT_GAP, noteButton.box[2],
+				trackerPiggyBtnBox[1], originalNameBox[2],
 				NOTEBOOK_PIGGY.WIDTH, NOTEBOOK_PIGGY.HEIGHT,
 			},
 			isVisible = function()
@@ -2652,23 +2710,32 @@ local function EncounterDetailsExtension()
 		}
 		local getText = function(button)
 			local textX = button.box[1] + button.box[3] + 1
-			return Utils.shortenText(originalGetText(button), pigButton.box[1] - textX - NOTEBOOK_PIGGY.TEXT_GAP, true)
+			return Utils.shortenText(originalGetText(button), backArea[1] - textX - NOTEBOOK_PIGGY.TEXT_GAP, true)
 		end
-		local clickableArea = {
-			originalArea[1], originalArea[2],
-			pigButton.box[1] - originalArea[1] - NOTEBOOK_PIGGY.TEXT_GAP, originalArea[4],
+		local nameBox = {
+			originalNameBox[1], originalNameBox[2],
+			pigButton.box[1] - originalNameBox[1] - NOTEBOOK_PIGGY.TEXT_GAP, originalNameBox[4],
 		}
+		local getNameText = function(button)
+			return Utils.shortenText(originalNameText(button), button.box[3] - 2, true)
+		end
 		notebookNoteBinding = {
 			noteButton = noteButton,
 			pigButton = pigButton,
 			originalGetText = originalGetText,
-			originalArea = originalArea,
 			getText = getText,
-			clickableArea = clickableArea,
+			nameButton = nameButton,
+			originalNameText = originalNameText,
+			originalNameBox = originalNameBox,
+			originalNameArea = originalNameArea,
+			getNameText = getNameText,
+			nameBox = nameBox,
 			previousButton = notes.Buttons.EncounterDetails,
 		}
 		noteButton.getText = getText
-		noteButton.clickableArea = clickableArea
+		nameButton.getCustomText = getNameText
+		nameButton.box = nameBox
+		nameButton.clickableArea = nameBox
 		notes.Buttons.EncounterDetails = pigButton
 	end
 
@@ -2677,10 +2744,11 @@ local function EncounterDetailsExtension()
 		local binding = notebookNoteBinding
 		local notes = NotebookPokemonNoteView
 		if binding.noteButton.getText == binding.getText then binding.noteButton.getText = binding.originalGetText end
-		if binding.noteButton.clickableArea == binding.clickableArea then
-			binding.noteButton.clickableArea = binding
-				.originalArea
+		if binding.nameButton.getCustomText == binding.getNameText then
+			binding.nameButton.getCustomText = binding.originalNameText
 		end
+		if binding.nameButton.box == binding.nameBox then binding.nameButton.box = binding.originalNameBox end
+		if binding.nameButton.clickableArea == binding.nameBox then binding.nameButton.clickableArea = binding.originalNameArea end
 		if notes.Buttons.EncounterDetails == binding.pigButton then
 			notes.Buttons.EncounterDetails = binding
 				.previousButton
