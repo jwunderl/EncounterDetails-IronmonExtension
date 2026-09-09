@@ -86,6 +86,8 @@ local function EncounterDetailsExtension()
 	local WAIT_MESSAGE_OPCODE = 0x12
 	local BATTLE_COMM_MESSAGE_DISPLAY_OFFSET = 7
 	local HITMARKER_ATTACKSTRING_PRINTED = 0x400
+	local BATTLE_TYPE_GHOST_BIT = 15
+	local BATTLE_TYPE_GHOST_UNVEILED_BIT = 13
 	local currentBattle = nil
 
 	local function dumpTable(o)
@@ -744,8 +746,20 @@ local function EncounterDetailsExtension()
 		currentBattle = nil
 	end
 
+	local function shouldIgnoreBattle()
+		if Battle.isGhost or (Battle.isWildEncounter and extensionSettings.ignoreWilds) then
+			return true
+		end
+		if GameSettings.game == 3 then
+			local battleFlags = Memory.readdword(GameSettings.gBattleTypeFlags)
+			return Utils.getbits(battleFlags, BATTLE_TYPE_GHOST_BIT, 1) == 1
+				and Utils.getbits(battleFlags, BATTLE_TYPE_GHOST_UNVEILED_BIT, 1) == 0
+		end
+		return false
+	end
+
 	local function trackEncounter(pokemon, isWild)
-		local playerMon = Tracker.getPokemon(1, true);
+		local playerMon = Tracker.getPokemon(Battle.Combatants.LeftOwn, true);
 		local encounterTimestamp = os.time()
 		local trackEncounterCommand = listToSqlCmd({
 			"INSERT INTO",
@@ -2452,6 +2466,10 @@ local function EncounterDetailsExtension()
 		if enemyPokemonMarkedEncountered == nil then
 			return
 		end
+		if shouldIgnoreBattle() then
+			discardBattleLog()
+			return
+		end
 
 		local enemyTeam = Battle.BattleParties[1]
 
@@ -2469,10 +2487,7 @@ local function EncounterDetailsExtension()
 
 	-- Executed after a new battle begins (wild or trainer), and only once per battle
 	function self.afterBattleBegins()
-		if Battle.isGhost then
-			return
-		end
-		if Battle.isWildEncounter and extensionSettings.ignoreWilds then
+		if shouldIgnoreBattle() then
 			return
 		end
 
@@ -2524,6 +2539,10 @@ local function EncounterDetailsExtension()
 		if not Main.IsOnBizhawk() or currentBattle == nil or not Battle.inActiveBattle() then
 			return
 		end
+		if shouldIgnoreBattle() then
+			discardBattleLog()
+			return
+		end
 
 		updateBattleAction()
 		updateVisibleMove()
@@ -2561,11 +2580,18 @@ local function EncounterDetailsExtension()
 			TrackerAPI.saveExtensionSetting(self.name, "noPiggy", extensionSettings.noPiggy)
 			TrackerAPI.saveExtensionSetting(self.name, "storeBattleLogs", extensionSettings.storeBattleLogs)
 			TrackerAPI.saveExtensionSetting(self.name, "showHPPixels", extensionSettings.showHPPixels)
-			if storeBattleLogsOriginal and not extensionSettings.storeBattleLogs then
+			if (storeBattleLogsOriginal and not extensionSettings.storeBattleLogs)
+				or (Battle.isWildEncounter and extensionSettings.ignoreWilds) then
 				discardBattleLog()
 			end
 
 			if ignoreWildsOriginal ~= extensionSettings.ignoreWilds then
+				if Battle.inBattleScreen and Battle.isWildEncounter and not shouldIgnoreBattle() then
+					enemyPokemonMarkedEncountered = enemyPokemonMarkedEncountered or {}
+					if extensionSettings.storeBattleLogs and currentBattle == nil then
+						startBattleLog()
+					end
+				end
 				PE_SCREEN.initialize()
 			end
 			client.unpause()
