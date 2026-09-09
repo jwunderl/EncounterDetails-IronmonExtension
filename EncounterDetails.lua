@@ -2176,6 +2176,15 @@ local function EncounterDetailsExtension()
 	local notebookRows = {}
 	local notebookOriginalBuild, notebookOriginalInput
 	local notebookBuild, notebookInput
+	local notebookNoteBinding
+
+	local function openNotebookHistory(pokemonID, previousScreen)
+		if not PokemonData.isValid(pokemonID) then return end
+		PE_SCREEN.previousScreen = previousScreen
+		PE_SCREEN.currentTab = extensionSettings.ignoreWilds and PE_SCREEN.Tabs.Trainer or PE_SCREEN.Tabs.All
+		PE_SCREEN.changePokemonID(pokemonID)
+		Program.changeScreenView(PE_SCREEN)
+	end
 
 	local function decorateNotebookRows()
 		notebookRows = {}
@@ -2196,11 +2205,7 @@ local function EncounterDetailsExtension()
 					button.box[2] = box[2] + box[4] - NOTEBOOK_PIGGY.HEIGHT - NOTEBOOK_PIGGY.BOTTOM_PADDING
 				end,
 				onClick = function()
-					if not PokemonData.isValid(pokemonID) then return end
-					PE_SCREEN.previousScreen = NotebookPokemonSeen
-					PE_SCREEN.currentTab = extensionSettings.ignoreWilds and PE_SCREEN.Tabs.Trainer or PE_SCREEN.Tabs.All
-					PE_SCREEN.changePokemonID(pokemonID)
-					Program.changeScreenView(PE_SCREEN)
+					openNotebookHistory(pokemonID, NotebookPokemonSeen)
 				end,
 			}
 			pigButton:alignToBox(row.box)
@@ -2274,6 +2279,65 @@ local function EncounterDetailsExtension()
 		notebookBuild, notebookInput = nil, nil
 	end
 
+	local function installNotebookNoteButton()
+		if notebookNoteBinding or not NotebookPokemonNoteView then return end
+		local notes = NotebookPokemonNoteView
+		local noteButton = notes.Buttons.Note
+		local backArea = notes.Buttons.Back.clickableArea or notes.Buttons.Back.box
+		local originalGetText = noteButton.getText
+		local originalArea = noteButton.clickableArea
+		local pigButton = {
+			type = Constants.ButtonTypes.PIXELIMAGE,
+			image = piggyPixelImage,
+			iconColors = pigColors,
+			textColor = notes.Colors.bottomText,
+			location = "bottom",
+			box = {
+				backArea[1] - NOTEBOOK_PIGGY.WIDTH - NOTEBOOK_PIGGY.TEXT_GAP, noteButton.box[2],
+				NOTEBOOK_PIGGY.WIDTH, NOTEBOOK_PIGGY.HEIGHT,
+			},
+			isVisible = function()
+				return notes.Data.isReady and PokemonData.isValid(notes.Data.pokemonID)
+			end,
+			onClick = function()
+				if notes.Data.isReady then openNotebookHistory(notes.Data.pokemonID, notes) end
+			end,
+		}
+		local getText = function(button)
+			local textX = button.box[1] + button.box[3] + 1
+			return Utils.shortenText(originalGetText(button), pigButton.box[1] - textX - NOTEBOOK_PIGGY.TEXT_GAP, true)
+		end
+		local clickableArea = {
+			originalArea[1], originalArea[2],
+			pigButton.box[1] - originalArea[1] - NOTEBOOK_PIGGY.TEXT_GAP, originalArea[4],
+		}
+		notebookNoteBinding = {
+			noteButton = noteButton, pigButton = pigButton,
+			originalGetText = originalGetText, originalArea = originalArea,
+			getText = getText, clickableArea = clickableArea,
+			previousButton = notes.Buttons.EncounterDetails,
+		}
+		noteButton.getText = getText
+		noteButton.clickableArea = clickableArea
+		notes.Buttons.EncounterDetails = pigButton
+	end
+
+	local function removeNotebookNoteButton()
+		if not notebookNoteBinding then return end
+		local binding = notebookNoteBinding
+		local notes = NotebookPokemonNoteView
+		if binding.noteButton.getText == binding.getText then binding.noteButton.getText = binding.originalGetText end
+		if binding.noteButton.clickableArea == binding.clickableArea then binding.noteButton.clickableArea = binding.originalArea end
+		if notes.Buttons.EncounterDetails == binding.pigButton then notes.Buttons.EncounterDetails = binding.previousButton end
+		if PE_SCREEN.previousScreen == notes then
+			if Program.currentScreen == PE_SCREEN or Program.currentScreen == BattleTimelineScreen then
+				Program.changeScreenView(notes)
+			end
+			PE_SCREEN.previousScreen = nil
+		end
+		notebookNoteBinding = nil
+	end
+
 	local extensionMoveSearchBox = {
 		Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 120, -- x
 		Constants.SCREEN.MARGIN + 24,                     -- y
@@ -2342,6 +2406,7 @@ local function EncounterDetailsExtension()
 		SingleExtensionScreen.Buttons.EncounterDetails = extensionPagePigBtn
 		SingleExtensionScreen.Buttons.MoveSearchButton = extensionPageMoveSearchButton
 		installNotebookButtons()
+		installNotebookNoteButton()
 	end
 
 	-- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
@@ -2351,6 +2416,7 @@ local function EncounterDetailsExtension()
 		end
 		finishBattleLog()
 		removeNotebookButtons()
+		removeNotebookNoteButton()
 
 		TrackerScreen.Buttons.EncounterDetails = nil
 		TrackerScreen.Buttons.InvisibleEncounterDetails = nil
