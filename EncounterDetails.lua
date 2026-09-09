@@ -88,6 +88,15 @@ local function EncounterDetailsExtension()
 	local HITMARKER_ATTACKSTRING_PRINTED = 0x400
 	local HITMARKER_UNABLE_TO_USE_MOVE = 0x80000
 	local MOVE_RESULT_NO_EFFECT = 0x29
+	local ITEM_ACTION = {
+		BUFFER_FROM_EXEC_FLAGS = -0x804,
+		BUFFER_SIZE = 0x200,
+		COMMITTED_RESPONSE = 0x23,
+		ITEM_OFFSET = 1,
+		MAX_ITEM_ID = 376,
+		EWRAM_START = 0x02000000,
+		EWRAM_END = 0x02040000,
+	}
 	local HIT_SUMMARY = {
 		MESSAGE_ID = 34,
 		BUFFER_BEGIN = 0xFD,
@@ -320,6 +329,7 @@ local function EncounterDetailsExtension()
 			"actorpokemonid INTEGER",
 			"actiontype INTEGER",
 			"moveid INTEGER",
+			"itemid INTEGER DEFAULT 0",
 			"iscritical INTEGER",
 			"hitcount INTEGER DEFAULT 0",
 			"critcount INTEGER DEFAULT 0",
@@ -356,7 +366,7 @@ local function EncounterDetailsExtension()
 		for _, column in ipairs(reformatSqlReadResult(SQL.readcommand("PRAGMA table_info(" .. self.timelineTableKey .. ")"))) do
 			timelineFields[column.name] = true
 		end
-		for _, field in ipairs({ "hitcount", "critcount" }) do
+		for _, field in ipairs({ "hitcount", "critcount", "itemid" }) do
 			if not timelineFields[field] then
 				SQL.writecommand("ALTER TABLE " ..
 				self.timelineTableKey .. " ADD COLUMN " .. field .. " INTEGER DEFAULT 0")
@@ -665,13 +675,13 @@ local function EncounterDetailsExtension()
 
 		local columns = {
 			"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid",
-			"actiontype", "moveid", "iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason",
+			"actiontype", "moveid", "itemid", "iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason",
 			"subjectindex",
 			"subjectpokemonid",
 		}
 		local values = {
 			current.id, action.sequence, action.turn, action.actionindex, action.actorindex,
-			action.actorpokemonid, action.actiontype, action.moveid, action.iscritical or 0, action.hitcount or 0, action
+			action.actorpokemonid, action.actiontype, action.moveid, action.itemid or 0, action.iscritical or 0, action.hitcount or 0, action
 		.critcount or 0, state.weather,
 			action.eventkind or 0, action.eventreason or 0, action.subjectindex or action.actorindex,
 			action.subjectpokemonid or action.actorpokemonid,
@@ -869,6 +879,23 @@ local function EncounterDetailsExtension()
 			action.moveid = moveID
 			saveTimelineEvent(action, current.latestState)
 		end
+	end
+
+	local function updateUsedItem()
+		local current = currentBattle
+		if not current then return end
+		local action = current.pendingAction
+		if not action or action.actiontype ~= 1 or (action.itemid or 0) ~= 0 or GameSettings.game ~= 3 then return end
+		if Memory.readbyte(GameSettings.gCurrentTurnActionNumber) ~= action.actionindex then return end
+		local flagsAddress = GameSettings.gBattleControllerExecFlags
+		if not flagsAddress then return end
+		local buffer = flagsAddress + ITEM_ACTION.BUFFER_FROM_EXEC_FLAGS + action.actorindex * ITEM_ACTION.BUFFER_SIZE
+		if buffer < ITEM_ACTION.EWRAM_START or buffer + ITEM_ACTION.ITEM_OFFSET + 2 > ITEM_ACTION.EWRAM_END then return end
+		if Memory.readbyte(buffer) ~= ITEM_ACTION.COMMITTED_RESPONSE then return end
+		local itemID = Memory.readword(buffer + ITEM_ACTION.ITEM_OFFSET)
+		if itemID <= 0 or itemID > ITEM_ACTION.MAX_ITEM_ID then return end
+		action.itemid = itemID
+		saveTimelineEvent(action, current.latestState)
 	end
 
 	local function updateBattleMessage()
@@ -1653,8 +1680,9 @@ local function EncounterDetailsExtension()
 	}
 	local BT_SCREEN = BattleTimelineScreen
 	local TIMELINE_HP_BAR_HEIGHT = 5
+	local TIMELINE_STATE_LAYOUT = { BOTTOM = 139, PAGE_Y = 142, PAGE_TEXT_X = 18, NEXT_X = 78, ARROW_SIZE = 10 }
 	local TIMELINE_NUMBER_FIELDS = {
-		"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid", "actiontype", "moveid",
+		"battleid", "sequence", "turn", "actionindex", "actorindex", "actorpokemonid", "actiontype", "moveid", "itemid",
 		"iscritical", "hitcount", "critcount", "weather", "eventkind", "eventreason", "subjectindex", "subjectpokemonid",
 	}
 	for _, prefix in ipairs(BATTLE_STATE_PREFIXES) do
@@ -1759,7 +1787,20 @@ local function EncounterDetailsExtension()
 		end
 
 		if #parts == 0 then return nil end
-		return table.concat(parts, ", ")
+		return parts
+	end
+
+	local function getStateLines(parts, maxWidth)
+		local lines = {}
+		for _, part in ipairs(parts or {}) do
+			local previous = lines[#lines]
+			if previous and Utils.calcWordPixelLength(previous .. ", " .. part) <= maxWidth then
+				lines[#lines] = previous .. ", " .. part
+			else
+				table.insert(lines, part)
+			end
+		end
+		return lines
 	end
 
 	local function getWeatherText(entry, previousEntry)
@@ -1780,6 +1821,35 @@ local function EncounterDetailsExtension()
 	end
 
 	BT_SCREEN.Buttons = {
+		PreviousState = {
+			type = Constants.ButtonTypes.PIXELIMAGE,
+			image = Constants.PixelImages.LEFT_ARROW,
+			box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 4, TIMELINE_STATE_LAYOUT.PAGE_Y,
+				TIMELINE_STATE_LAYOUT.ARROW_SIZE, TIMELINE_STATE_LAYOUT.ARROW_SIZE },
+			isVisible = function() return (BT_SCREEN.statePageCount or 1) > 1 end,
+			onClick = function()
+				BT_SCREEN.statePage = ((BT_SCREEN.statePage or 1) - 2) % BT_SCREEN.statePageCount + 1
+				Program.redraw(true)
+			end,
+		},
+		StatePage = {
+			type = Constants.ButtonTypes.NO_BORDER,
+			box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + TIMELINE_STATE_LAYOUT.PAGE_TEXT_X,
+				TIMELINE_STATE_LAYOUT.PAGE_Y, 58, 10 },
+			isVisible = function() return (BT_SCREEN.statePageCount or 1) > 1 end,
+			getText = function() return string.format("State %d/%d", BT_SCREEN.statePage, BT_SCREEN.statePageCount) end,
+		},
+		NextState = {
+			type = Constants.ButtonTypes.PIXELIMAGE,
+			image = Constants.PixelImages.RIGHT_ARROW,
+			box = { Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + TIMELINE_STATE_LAYOUT.NEXT_X,
+				TIMELINE_STATE_LAYOUT.PAGE_Y, TIMELINE_STATE_LAYOUT.ARROW_SIZE, TIMELINE_STATE_LAYOUT.ARROW_SIZE },
+			isVisible = function() return (BT_SCREEN.statePageCount or 1) > 1 end,
+			onClick = function()
+				BT_SCREEN.statePage = (BT_SCREEN.statePage or 1) % BT_SCREEN.statePageCount + 1
+				Program.redraw(true)
+			end,
+		},
 		Previous = {
 			type = Constants.ButtonTypes.PIXELIMAGE,
 			image = Constants.PixelImages.LEFT_ARROW,
@@ -1870,11 +1940,13 @@ local function EncounterDetailsExtension()
 			end
 		end
 		BT_SCREEN.currentIndex = findEncounterStart(BT_SCREEN.entries, tonumber(pokemonID))
+		BT_SCREEN.statePage, BT_SCREEN.statePageCount = 1, 1
 		Program.changeScreenView(BattleTimelineScreen)
 	end
 
 	function BattleTimelineScreen.changeStep(offset)
 		BT_SCREEN.currentIndex = math.max(1, math.min(#BT_SCREEN.entries, BT_SCREEN.currentIndex + offset))
+		BT_SCREEN.statePage, BT_SCREEN.statePageCount = 1, 1
 		Program.redraw(true)
 	end
 
@@ -1900,6 +1972,7 @@ local function EncounterDetailsExtension()
 			Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
 
 		local entry = BT_SCREEN.entries[BT_SCREEN.currentIndex]
+		BT_SCREEN.statePageCount = 1
 		local y = canvas.y + 4
 		if entry == nil then
 			Drawing.drawText(canvas.x + 4, y, "No battle actions recorded.", canvas.text, canvas.shadow)
@@ -1953,8 +2026,11 @@ local function EncounterDetailsExtension()
 					if MoveData.isValid(entry.moveid) then
 						actionText = MoveData.Moves[entry.moveid].name
 					end
+				elseif entry.actiontype == 1 and entry.itemid > 0 then
+					actionText = TrackerAPI.getItemName(entry.itemid) or "Item"
 				end
-				actionText = EVENT_LABELS[entry.eventreason] or ("Action: " .. actionText)
+				local actionPrefix = entry.actiontype == 1 and entry.itemid > 0 and "Item: " or "Action: "
+				actionText = EVENT_LABELS[entry.eventreason] or (actionPrefix .. actionText)
 				Drawing.drawText(canvas.x + 4, y, fitTimelineText(actionText, canvas.width - 8),
 					Theme.COLORS[BT_SCREEN.Colors.highlight], canvas.shadow)
 				if hitText and not isDoubleBattle then
@@ -1985,23 +2061,34 @@ local function EncounterDetailsExtension()
 			}
 			local barX = canvas.x + 5
 			local conditionX = barX + HP_BAR_PIXELS + 6
+			local statePages = { {} }
+			local pageHeight = 0
+			local availableHeight = TIMELINE_STATE_LAYOUT.BOTTOM - y
 			for _, row in ipairs(stateRows) do
 				local pokemonID = entry[row.prefix .. "id"] or 0
 				if pokemonID ~= 0 then
+					row.conditionLines = getStateLines(getPokemonStateText(entry, previousEntry, row.prefix), canvas.width - 8)
+					local rowHeight = Constants.SCREEN.LINESPACING + Utils.inlineIf(isDoubleBattle, 0, 1)
+						+ TIMELINE_HP_BAR_HEIGHT + Utils.inlineIf(isDoubleBattle, 3, 4)
+						+ #row.conditionLines * Constants.SCREEN.LINESPACING
+					if pageHeight > 0 and pageHeight + rowHeight + 2 > availableHeight then
+						table.insert(statePages, {})
+						pageHeight = 0
+					end
+					table.insert(statePages[#statePages], row)
+					pageHeight = pageHeight + rowHeight
+				end
+			end
+			BT_SCREEN.statePageCount = #statePages
+			BT_SCREEN.statePage = math.min(BT_SCREEN.statePage or 1, #statePages)
+			for _, row in ipairs(statePages[BT_SCREEN.statePage]) do
+				local pokemonID = entry[row.prefix .. "id"] or 0
+				if pokemonID ~= 0 then
 					local text = row.label .. " " .. getPokemonName(pokemonID)
-					local conditionText = getPokemonStateText(entry, previousEntry, row.prefix)
-					if conditionText == nil then
-						Drawing.drawText(canvas.x + 4, y, fitTimelineText(text, canvas.width - 8),
-							canvas.text, canvas.shadow)
-					else
-						local maxConditionWidth = math.floor((canvas.width - 12) * 0.65)
-						conditionText = fitTimelineText(conditionText, maxConditionWidth)
-						local conditionWidth = Utils.calcWordPixelLength(conditionText)
-						local nameWidth = canvas.width - conditionWidth - 13
-						Drawing.drawText(canvas.x + 4, y, fitTimelineText(text, nameWidth),
-							canvas.text, canvas.shadow)
-						Drawing.drawText(canvas.x + canvas.width - conditionWidth - 4, y, conditionText,
-							canvas.text, canvas.shadow)
+					Drawing.drawText(canvas.x + 4, y, fitTimelineText(text, canvas.width - 8), canvas.text, canvas.shadow)
+					for _, line in ipairs(row.conditionLines) do
+						y = y + Constants.SCREEN.LINESPACING
+						Drawing.drawText(canvas.x + 4, y, line, canvas.text, canvas.shadow)
 					end
 					y = y + Constants.SCREEN.LINESPACING + Utils.inlineIf(isDoubleBattle, 0, 1)
 					local hpPixels = entry[row.prefix .. "hp"] or HP_UNKNOWN
@@ -2958,6 +3045,7 @@ local function EncounterDetailsExtension()
 		observeHPUpdate()
 		updateBattleMessage()
 		updateVisibleMove()
+		updateUsedItem()
 		updateCriticalHit()
 		updateBattleState()
 	end
